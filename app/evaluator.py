@@ -131,11 +131,92 @@ _SYSTEM_PROMPT = """\
   "matched_keywords": ["..."],
   "missing_keywords": ["..."],
   "rewritten_summary": "改写示范文本"
-}"""
+}
+
+JSON 格式硬性要求（违反会导致解析失败）：
+- 字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；
+- 不要出现尾随逗号（如 "high",] 这种 ] 或 } 前的逗号）；
+- 所有字符串必须正确闭合。"""
+
+
+def _fix_missing_commas(s: str) -> str:
+    """补全值之间缺失的逗号：
+    在值结束（" } ] 或数字）后紧跟新 token（" { [ 数字）时插入逗号，
+    典型如数组两个元素间模型漏掉了逗号。"""
+    out: list[str] = []
+    i, n = 0, len(s)
+    in_str = False
+    prev = ""  # 上一个非空白字符
+    had_space = False  # 当前 token 与前一 token 之间是否有空白（多位数内部无空白，不能误插逗号）
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if ch == "\\" and i + 1 < n:  # 转义字符整体保留
+                out.append(ch)
+                out.append(s[i + 1])
+                prev = s[i + 1]
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+            out.append(ch)
+            prev = ch
+        else:
+            if ch in " \t\r\n":
+                out.append(ch)
+                had_space = True
+                i += 1
+                continue
+            token_start = ch in '"{[' or ch.isdigit() or ch == "-"
+            value_ended = prev in ('"', '}', ']') or prev.isdigit()
+            if token_start and value_ended and had_space:
+                out.append(",")
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+            prev = ch
+            had_space = False
+        i += 1
+    return "".join(out)
+
+
+def _fix_inner_quotes(s: str) -> str:
+    """修复字符串值内部未转义的双引号：
+    在字符串内遇到 " 时，向后看第一个非空白字符——若为 , : } ] 之一则视为闭合引号，
+    否则判定为值内部引用，转义处理。"""
+    out: list[str] = []
+    i, n = 0, len(s)
+    in_str = False
+    while i < n:
+        ch = s[i]
+        if not in_str:
+            if ch == '"':
+                in_str = True
+            out.append(ch)
+        else:
+            if ch == "\\" and i + 1 < n:  # 已转义字符原样保留
+                out.append(ch)
+                out.append(s[i + 1])
+                i += 1
+            elif ch == '"':
+                j = i + 1
+                while j < n and s[j] in " \t\r\n":
+                    j += 1
+                if j >= n or s[j] in ",:}]":
+                    in_str = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')
+            else:
+                out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _extract_json(raw: str) -> dict:
-    """宽容地从模型输出中提取 JSON（剥离代码块围栏、前后杂文）。"""
+    """宽容地从模型输出中提取 JSON：
+    剥离代码块围栏/前后杂文 → 直接解析 → 逐级尝试修复
+    （尾随逗号 → 缺失逗号 → 值内未转义引号 → 组合修复）。"""
     text = raw.strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
@@ -143,30 +224,107 @@ def _extract_json(raw: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
         raise ValueError("模型输出中未找到 JSON")
-    return json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    # 基础修复：去掉尾随逗号（"…",] 或 "…",}）
+    no_trailing = re.sub(r",\s*([}\]])", r"\1", candidate)
+    # 逐级尝试：原样 → 去尾逗号 → 补缺失逗号 → 转义值内引号 → 组合
+    attempts = [
+        candidate,
+        no_trailing,
+        _fix_missing_commas(no_trailing),
+        _fix_inner_quotes(no_trailing),
+        _fix_missing_commas(_fix_inner_quotes(no_trailing)),
+    ]
+    for attempt in attempts:
+        try:
+            return json.loads(attempt)
+        except json.JSONDecodeError:
+            continue
+    raise ValueError("模型输出不是合法 JSON（已尝试自动修复仍失败），请重试")
+
+
+def format_llm_http_error(status: int, body: str) -> str:
+    """将上游 LLM 接口错误转成可读中文提示（兼容 OpenAI / Anthropic 两种错误体）。"""
+    msg, code = "", ""
+    try:
+        err = json.loads(body).get("error", {})
+        if isinstance(err, dict):
+            msg = str(err.get("message", ""))
+            code = str(err.get("code", ""))
+    except Exception:  # noqa: BLE001
+        pass
+    if code == "1113" or "余额不足" in msg or "无可用资源包" in msg:
+        return (
+            "该模型在此端点余额不足或无可用资源包（智谱错误码 1113）："
+            "若你使用 GLM Coding Plan 等套餐，请将 Base URL 改为 Anthropic 兼容端点 "
+            "https://open.bigmodel.cn/api/anthropic；或改用免费模型（如 glm-4.5-flash），或充值后重试"
+        )
+    if status == 401:
+        return "鉴权失败（401），请检查 API Key 是否正确"
+    if status == 429:
+        return "请求过于频繁（429 限流），请稍后重试"
+    if status == 404:
+        return "接口不存在（404），请检查 Base URL 是否为 OpenAI / Anthropic 兼容地址"
+    return f"HTTP {status}：{(msg or body)[:200]}"
+
+
+def _is_anthropic(base_url: str) -> bool:
+    """识别 Anthropic 兼容端点（如智谱 GLM Coding Plan 使用的 /api/anthropic）。"""
+    return "/anthropic" in base_url
+
+
+async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
+    """统一 LLM 调用入口：按 Base URL 自动适配 OpenAI 兼容 / Anthropic 兼容协议，返回文本。
+
+    - OpenAI 兼容：POST {base}/chat/completions，Bearer 鉴权，取 choices[0].message.content
+    - Anthropic 兼容：POST {base}/v1/messages，x-api-key 鉴权，拼接 content 中 type=text 的块
+      （thinking 模型的思考块会被自动忽略）
+    """
+    cfg = config.get()
+    if not cfg["base_url"] or not cfg["model"]:
+        raise RuntimeError("AI 配置不完整（缺少 Base URL 或模型名称），请在右上角设置中补全")
+
+    if _is_anthropic(cfg["base_url"]):
+        payload = {
+            "model": cfg["model"],
+            "max_tokens": 16384,  # thinking 模型思考边占用输出预算，上限给足避免 JSON 被截断
+            "temperature": temperature,
+            "thinking": {"type": "disabled"},  # 结构化任务关闭深度思考：更快更省，避免思考耗尽预算
+            "system": system,
+            "messages": [{"role": "user", "content": user}],
+        }
+        headers = {"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01"}
+        url = f"{cfg['base_url']}/v1/messages"
+    else:
+        payload = {
+            "model": cfg["model"],
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        }
+        headers = {"Authorization": f"Bearer {cfg['api_key']}"}
+        url = f"{cfg['base_url']}/chat/completions"
+
+    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(format_llm_http_error(resp.status_code, resp.text))
+    data = resp.json()
+    if _is_anthropic(cfg["base_url"]):
+        return "".join(
+            b.get("text", "") for b in data.get("content", []) if isinstance(b, dict) and b.get("type") == "text"
+        )
+    return data["choices"][0]["message"]["content"]
 
 
 async def evaluate_with_llm(jd: str, resume: str) -> dict:
-    cfg = config.get()
-    payload = {
-        "model": cfg["model"],
-        "temperature": 0.3,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"【岗位JD】\n{jd}\n\n【简历】\n{resume}",
-            },
-        ],
-    }
-    headers = {"Authorization": f"Bearer {cfg['api_key']}"}
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        resp = await client.post(
-            f"{cfg['base_url']}/chat/completions", json=payload, headers=headers
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(f"LLM 接口返回 {resp.status_code}：{resp.text[:300]}")
-    raw = resp.json()["choices"][0]["message"]["content"]
+    raw = await chat_text(
+        _SYSTEM_PROMPT,
+        f"【岗位JD】\n{jd}\n\n【简历】\n{resume}",
+        temperature=0.3,
+    )
     result = _extract_json(raw)
     result["engine"] = "llm"
     result["overall_score"] = _clamp(int(round(float(result.get("overall_score", 60)))))

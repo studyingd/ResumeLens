@@ -8,10 +8,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import httpx
-
-from . import config
-from .evaluator import _extract_jd_keywords, _extract_json, _keyword_in_text
+from .evaluator import _extract_jd_keywords, _extract_json, _keyword_in_text, chat_text
 
 # ---------------------------------------------------------------------------
 # 候选人姓名识别
@@ -77,28 +74,14 @@ _QUESTIONS_PROMPT = """\
     {"category": "岗位职责|技能验证|短板探测|情景设计|软素质", "question": "问题原文", "intent": "考察意图（注明对应JD要求）", "reference": "参考答案要点"}
   ],
   "focus_areas": ["本场面试的重点提示，2-4 条"]
-}"""
+}
+
+JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；不要出现尾随逗号。"""
 
 
 async def generate_questions_llm(jd: str, resume: str) -> dict:
-    cfg = config.get()
-    payload = {
-        "model": cfg["model"],
-        "temperature": 0.4,
-        "messages": [
-            {"role": "system", "content": _QUESTIONS_PROMPT},
-            {"role": "user", "content": f"【岗位JD】\n{jd}\n\n【候选人简历】\n{resume}"},
-        ],
-    }
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        resp = await client.post(
-            f"{cfg['base_url']}/chat/completions",
-            json=payload,
-            headers={"Authorization": f"Bearer {cfg['api_key']}"},
-        )
-    if resp.status_code != 200:
-        raise RuntimeError(f"LLM 接口返回 {resp.status_code}")
-    data = _extract_json(resp.json()["choices"][0]["message"]["content"])
+    raw = await chat_text(_QUESTIONS_PROMPT, f"【岗位JD】\n{jd}\n\n【候选人简历】\n{resume}", temperature=0.4)
+    data = _extract_json(raw)
 
     questions = []
     for q in data.get("questions", []):
@@ -118,6 +101,67 @@ async def generate_questions_llm(jd: str, resume: str) -> dict:
         "engine": "llm",
         "questions": questions[:10],
         "focus_areas": [str(a) for a in data.get("focus_areas", [])][:4],
+    }
+
+
+# ---------------------------------------------------------------------------
+# 面试问题：单题重新生成（面试官对某一题不满意时替换该题）
+# ---------------------------------------------------------------------------
+
+
+async def regen_question_llm(
+    jd: str, resume: str, category: str, current: str, others: list[str]
+) -> dict:
+    """重新生成一道题：保持原题类别、锚定 JD、与保留题目不重复。"""
+    cat = category or "综合"
+    others_text = "\n".join(f"- {o}" for o in others[:20] if o.strip()) or "- （无）"
+    system = (
+        "你是一位有 15 年经验的技术面试官。一场面试的题单已经确定，面试官对其中一道题不满意，需要你重新出一道来替换它。\n\n"
+        "要求（必须遵守）：\n"
+        "- 新题必须锚定【岗位JD】中的某条职责或任职要求，以岗位为出题主线；简历仅作交叉参照。\n"
+        f"- 考察类别保持不变：category 必须为「{cat}」。\n"
+        "- 与【其余保留的题目】不重复，考察角度需与原题有明显差异。\n"
+        "- 给出考察意图（intent，注明对应 JD 的哪条要求）与参考答案要点（reference）。\n\n"
+        "只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：\n"
+        '{"category": "…", "question": "…", "intent": "…", "reference": "…"}\n\n'
+        "JSON 格式硬性要求：字符串值内部不要使用英文双引号，如需引用词语请用中文引号「」；不要出现尾随逗号。"
+    )
+    user = (
+        f"【岗位JD】\n{jd}\n\n【候选人简历】\n{resume}\n\n"
+        f"【需要替换的原题】（类别：{cat}）\n{current}\n\n【其余保留的题目】\n{others_text}"
+    )
+    raw = await chat_text(system, user, temperature=0.7)
+    data = _extract_json(raw)
+    if not isinstance(data, dict) or not str(data.get("question", "")).strip():
+        raise ValueError("模型未返回有效问题")
+    return {
+        "category": str(data.get("category") or cat),
+        "question": str(data["question"]).strip(),
+        "intent": str(data.get("intent", "")),
+        "reference": str(data.get("reference", "")),
+    }
+
+
+def regen_question_heuristic(
+    jd: str, resume: str, category: str, current: str, others: list[str]
+) -> dict:
+    """本地模板替换：优先取同类别且未与保留题重复的模板题；池耗尽则给开放深挖题。"""
+    pool = questions_heuristic(jd, resume)["questions"]
+    exclude = set(others) | {current}
+    for q in pool:
+        if q["question"] not in exclude and (not category or q["category"] == category):
+            return q
+    for q in pool:
+        if q["question"] not in exclude:
+            return q
+    return {
+        "category": category or "综合",
+        "question": (
+            "请挑选你过往经历中最能体现岗位胜任力的一件事，完整讲述：背景与目标、"
+            "你的关键决策与取舍、遇到的最大困难与解法、以及最终的量化结果与复盘。"
+        ),
+        "intent": "开放性深挖题，考察决策质量、结果意识与复盘深度",
+        "reference": "关注决策逻辑是否清晰、是否有量化结果、复盘是否触及方法论层面",
     }
 
 

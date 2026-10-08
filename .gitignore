@@ -16,3 +16,6 @@ server*.log
 resp*.json
 page.html
 
+# 用户上传的简历原件（隐私数据，严禁入库）
+resume_store/
+

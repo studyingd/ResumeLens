@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=2" />
 </head>
 <body>
 
@@ -242,9 +242,10 @@
         <header class="group-head">
           <span class="group-index">01</span><h3>候选人排名</h3><span class="group-rule" aria-hidden="true"></span>
           <span id="rank-meta" class="group-count"></span>
+          <button type="button" id="rank-clear" class="btn btn-ghost btn-sm btn-danger-ghost">清空排名</button>
         </header>
         <div id="rank-list" class="rank-list"></div>
-        <p class="rank-tip">点击任意候选人卡片可查看完整评估详情，并基于 JD 与该候选人简历生成结构化面试题</p>
+        <p class="rank-tip">同一 JD 下再次批量评估为增量模式：只评估新增或内容有变的简历，未变更的自动跳过并保留原记录 · 同名新文件视为该候选人的更新版简历，重评后覆盖旧记录 · 换 JD 自动重开新榜并全量重评 · 历史保存在本机，刷新不丢失 · 点击卡片查看详情、简历附件与面试题</p>
       </div>
     </div>
   </section>
@@ -273,12 +274,12 @@
       </div>
 
       <p class="modal-desc">
-        配置 OpenAI 兼容的大模型接口后，即可在本页直接启用 AI 深度评估。
+        配置 OpenAI 兼容或 Anthropic 兼容的大模型接口后，即可在本页直接启用 AI 深度评估。
       </p>
 
       <div class="field">
-        <label for="cfg-baseurl" class="field-label">API Base URL</label>
-        <input type="text" id="cfg-baseurl" class="text-input" placeholder="https://api.deepseek.com/v1" autocomplete="off" spellcheck="false" />
+        <label for="cfg-baseurl" class="field-label">API Base URL <span class="field-hint">（按地址自动识别 OpenAI / Anthropic 协议）</span></label>
+        <input type="text" id="cfg-baseurl" class="text-input" placeholder="OpenAI 兼容：https://api.deepseek.com/v1 · 智谱 Coding Plan：https://open.bigmodel.cn/api/anthropic" autocomplete="off" spellcheck="false" />
       </div>
       <div class="field">
         <label for="cfg-key" class="field-label">API Key <span class="field-hint">（Ollama 本地服务填任意非空值）</span></label>
@@ -347,6 +348,20 @@
         <h5 class="detail-sec-title">关键词覆盖</h5>
         <div id="detail-keywords" class="detail-keywords"></div>
 
+        <div class="resume-block">
+          <div class="questions-head">
+            <h5 class="detail-sec-title">简历附件</h5>
+            <button type="button" id="resume-toggle" class="btn btn-ghost btn-sm resume-toggle" aria-expanded="false" aria-controls="resume-body">
+              <svg class="resume-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              <span id="resume-toggle-label">查看简历</span>
+            </button>
+          </div>
+          <div id="resume-body" class="resume-body" hidden>
+            <iframe id="resume-frame" class="resume-frame" title="简历附件预览"></iframe>
+            <p id="resume-missing" class="resume-truncated" hidden>该候选人未保存简历附件（历史数据或存储失败），请重新上传评估后查看原件。</p>
+          </div>
+        </div>
+
         <div class="questions-block">
           <div class="questions-head">
             <h5 class="detail-sec-title">结构化面试题</h5>
@@ -361,6 +376,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 </body>
 </html>

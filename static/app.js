@@ -66,6 +66,7 @@
     rankNotice: $("#rank-notice"),
     rankMeta: $("#rank-meta"),
     rankList: $("#rank-list"),
+    rankClear: $("#rank-clear"),
     detailOverlay: $("#detail-overlay"),
     detailClose: $("#detail-close"),
     detailRank: $("#detail-rank"),
@@ -80,6 +81,11 @@
     detailStrengths: $("#detail-strengths"),
     detailImprovements: $("#detail-improvements"),
     detailKeywords: $("#detail-keywords"),
+    resumeToggle: $("#resume-toggle"),
+    resumeToggleLabel: $("#resume-toggle-label"),
+    resumeBody: $("#resume-body"),
+    resumeFrame: $("#resume-frame"),
+    resumeMissing: $("#resume-missing"),
     qgGenerate: $("#qg-generate"),
     qgGenerateLabel: $("#qg-generate-label"),
     qgResult: $("#qg-result"),
@@ -89,13 +95,16 @@
     file: null,
     busy: false,
     view: "candidate",
+    engine: "", // 当前评估引擎（llm / heuristic），用于增量评估的口径判断
     batchFiles: [],
     rankData: [],
+    rankJd: "",
+    rankBatches: 0,
     detailIndex: -1,
-    questionsCache: {},
   };
   const ALLOWED = [".pdf", ".docx", ".txt", ".md"];
   const RING_C = 527.79; // 2πr, r=84
+  const RANK_LS_KEY = "resumelens.rank.v1"; // 候选人排名历史（本地存储）
 
   /* ---------- 工具 ---------- */
 
@@ -151,6 +160,7 @@
     try {
       const res = await fetch("/api/health");
       const data = await res.json();
+      state.engine = data.engine === "llm" ? "llm" : "heuristic";
       els.engineBadge.classList.remove("is-llm", "is-heuristic");
       if (data.engine === "llm") {
         els.engineBadge.classList.add("is-llm");
@@ -162,6 +172,7 @@
         els.engineText.textContent = "本地分析 · 点击配置 AI";
       }
     } catch {
+      state.engine = "";
       els.engineText.textContent = "服务未连接";
     }
   }
@@ -187,7 +198,11 @@
     els.jdCount.classList.toggle("is-ok", n >= 30);
   }
 
-  els.jdInput.addEventListener("input", updateJdCount);
+  els.jdInput.addEventListener("input", () => {
+    updateJdCount();
+    // JD 变化会影响增量判定（换 JD 需全量重评），同步刷新队列底部的待评估提示
+    if (state.view === "interviewer" && state.batchFiles.length) renderBatchList();
+  });
 
   els.jdSampleBtn.addEventListener("click", () => {
     els.jdInput.value = SAMPLE_JD;
@@ -223,7 +238,7 @@
     els.dropzone.classList.toggle("has-file", isCandidate && !!state.file);
     els.evaluateLabel.textContent = isCandidate ? "开始匹配分析" : "批量评估排名";
     els.results.hidden = true;
-    els.resultsRank.hidden = true;
+    els.resultsRank.hidden = !(view === "interviewer" && state.rankData.length > 0);
   }
 
   els.viewCandidate.addEventListener("click", () => setView("candidate"));
@@ -261,12 +276,29 @@
     renderBatchList();
   }
 
+  // 文件指纹：文件名 + 大小 + 修改时间，三者一致视为「同一份未变更的简历」
+  const fileSig = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+
+  // 增量评估切分：同一 JD、同一引擎下，已在排名中且内容未变的简历无需重评，只提交新增/变更的文件
+  function splitPendingFiles(jd) {
+    const incremental = state.rankJd === jd && state.rankData.length > 0;
+    const pending = [];
+    let skipped = 0;
+    for (const f of state.batchFiles) {
+      const ranked =
+        incremental &&
+        state.rankData.some((d) => d.sig === fileSig(f) && d.result.engine === state.engine);
+      if (ranked) skipped += 1;
+      else pending.push(f);
+    }
+    return { pending, skipped };
+  }
+
   function renderBatchList() {
     els.batchFileList.hidden = state.view === "candidate" || state.batchFiles.length === 0;
-    els.batchFileList.innerHTML =
-      state.batchFiles
-        .map(
-          (f, i) => `
+    const itemsHtml = state.batchFiles
+      .map(
+        (f, i) => `
         <div class="batch-file-item">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M13 2v7h7"/></svg>
           <div class="file-chip-body">
@@ -277,11 +309,21 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
           </button>
         </div>`
-        )
-        .join("") +
-      (state.batchFiles.length
-        ? `<p class="batch-count">共 ${state.batchFiles.length} 份简历，点击「批量评估排名」开始分析</p>`
-        : "");
+      )
+      .join("");
+    let footer = "";
+    if (state.batchFiles.length) {
+      const jdNow = els.jdInput.value.trim();
+      const { pending, skipped } = splitPendingFiles(jdNow);
+      if (state.rankData.length && state.rankJd && state.rankJd !== jdNow) {
+        footer = `<p class="batch-count">JD 已变更，重新评估将重开新榜并全量评估 ${state.batchFiles.length} 份简历</p>`;
+      } else if (skipped) {
+        footer = `<p class="batch-count">共 ${state.batchFiles.length} 份简历：待评估 ${pending.length} 份 · 已计入排名 ${skipped} 份（增量评估自动跳过）</p>`;
+      } else {
+        footer = `<p class="batch-count">共 ${state.batchFiles.length} 份简历，点击「批量评估排名」开始分析</p>`;
+      }
+    }
+    els.batchFileList.innerHTML = itemsHtml + footer;
   }
 
   els.batchFileList.addEventListener("click", (e) => {
@@ -426,11 +468,19 @@
       toast("请先上传至少一份候选人简历（支持一次多选）");
       return;
     }
+    // 增量评估：同一 JD 下已计入排名且内容未变的简历不再重评，仅提交新增/变更的文件
+    const { pending, skipped } = splitPendingFiles(jd);
+    if (!pending.length) {
+      toast("队列中的简历均已评估并计入当前排名；如需重新评估某位候选人，可先在排名中移除其卡片，再点击「批量评估排名」", "info", 5200);
+      els.resultsRank.hidden = false;
+      els.resultsRank.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     const form = new FormData();
     form.append("jd", jd);
-    state.batchFiles.forEach((f) => form.append("files", f));
+    pending.forEach((f) => form.append("files", f));
 
-    setLoading(true, `正在评估 ${state.batchFiles.length} 份简历…`);
+    setLoading(true, `正在评估 ${pending.length} 份简历${skipped ? `（已跳过 ${skipped} 份）` : ""}…`);
     try {
       const res = await fetch("/api/batch-evaluate", { method: "POST", body: form });
       let data;
@@ -445,7 +495,7 @@
           : data?.detail;
         throw new Error(detail ?? `请求失败（${res.status}）`);
       }
-      renderRank(data);
+      renderRank(data, jd, new Map(pending.map((f) => [f.name, fileSig(f)])), skipped);
       els.resultsRank.hidden = false;
       observeReveals(els.resultsRank);
       els.resultsRank.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -459,42 +509,93 @@
   const chevronSvg =
     '<svg class="chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>';
 
-  function renderRank(data) {
+  function renderRank(data, jd, sigMap = new Map(), skipped = 0) {
     const okItems = data.results.filter((r) => r.ok);
     const errItems = data.results.filter((r) => !r.ok);
-    okItems.sort((a, b) => (b.result.overall_score ?? 0) - (a.result.overall_score ?? 0));
-    state.rankData = [...okItems, ...errItems];
-    state.questionsCache = {};
 
-    els.rankNotice.hidden = true;
-    els.rankMeta.textContent = `共 ${data.results.length} 份 · 成功 ${okItems.length} 份 · ${
-      data.engine === "llm" ? "AI 评估" : "本地分析"
-    }`;
+    // 换了 JD：分数口径不同，开启全新排名历史；同一 JD：追加合并
+    if (state.rankJd !== jd) {
+      state.rankJd = jd;
+      state.rankData = [];
+      state.rankBatches = 0;
+    }
 
+    const isAppend = state.rankBatches > 0 && state.rankData.length > 0;
+    state.rankBatches += 1;
+    const time = rankTimeLabel();
+
+    let replaced = 0;
+    for (const item of okItems) {
+      item.batch = state.rankBatches;
+      item.time = time;
+      item.sig = sigMap.get(item.filename) ?? ""; // 文件指纹：供下次增量评估识别「未变更的简历」
+      // 同名文件视为同一候选人重新提交：用最新评估覆盖，并作废其面试题缓存
+      const idx = state.rankData.findIndex((d) => d.filename === item.filename);
+      if (idx >= 0) {
+        state.rankData[idx] = item; // 新评估覆盖旧记录（含旧题单，简历已变）
+        replaced += 1;
+      } else {
+        state.rankData.push(item);
+      }
+    }
+    state.rankData.sort((a, b) => (b.result.overall_score ?? 0) - (a.result.overall_score ?? 0));
+    saveRank();
+    renderRankList();
+    renderBatchList(); // 本批文件已计入排名，队列底部「待评估 / 已跳过」提示随之刷新
+
+    // 提示横幅：失败文件不入排名；混合引擎时提醒评分口径不一致
+    const notices = [];
+    if (errItems.length) {
+      notices.push(
+        `${errItems.length} 份文件解析失败，未纳入排名：${errItems
+          .map((e) => `${e.filename}（${e.error ?? "未知错误"}）`)
+          .join("；")}`
+      );
+    }
+    const engines = new Set(state.rankData.map((d) => d.result.engine));
+    if (engines.size > 1) {
+      notices.push(
+        "注意：当前排名混合了「AI 评估」与「本地分析」两种引擎的结果，两者评分口径不同，先后顺序仅供参考；建议对标记为本地分析的候选人重新评估后再比较。"
+      );
+    }
+    if (notices.length) {
+      els.rankNotice.textContent = notices.join(" ");
+      els.rankNotice.hidden = false;
+    } else {
+      els.rankNotice.hidden = true;
+    }
+
+    if (isAppend || skipped) {
+      const added = okItems.length - replaced;
+      const base = isAppend
+        ? `已追加 ${added} 位候选人${replaced ? `，更新 ${replaced} 位同名候选人` : ""}，共 ${state.rankData.length} 位，排名已重排`
+        : `已评估 ${okItems.length} 位候选人，共 ${state.rankData.length} 位`;
+      toast(skipped ? `${base}；增量模式跳过 ${skipped} 份未变更简历` : base, "success", 3600);
+    }
+  }
+
+  function rankTimeLabel(d = new Date()) {
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    return `${hh}:${mm}`;
+  }
+
+  function renderRankList() {
+    els.rankMeta.textContent = `共 ${state.rankData.length} 位 · 累计 ${state.rankBatches} 轮`;
     els.rankList.innerHTML = state.rankData
       .map((item, i) => {
-        if (!item.ok) {
-          return `
-          <article class="rank-card rank-card-error">
-            <span class="rank-badge rank-err">!</span>
-            <div class="rank-main">
-              <h4 class="rank-name">${esc(item.filename)}</h4>
-              <p class="rank-verdict">解析失败，未参与排名</p>
-              <p class="rank-meta">${esc(item.error ?? "未知错误")}</p>
-            </div>
-          </article>`;
-        }
         const r = item.result;
         const matched = r.matched_keywords ?? [];
         const missing = r.missing_keywords ?? [];
         return `
         <article class="rank-card" data-index="${i}" data-tone="${toneOf(r.overall_score)}" tabindex="0" role="button"
-                 aria-label="查看 ${esc(r.candidate || item.filename)} 的评估详情与面试题">
+                 aria-label="查看 ${esc(r.candidate || item.filename)} 的评估详情、简历附件与面试题">
           <span class="rank-badge${i < 3 ? ` rank-${i + 1}` : ""}">${i + 1}</span>
           <div class="rank-main">
             <div class="rank-title-row">
               <h4 class="rank-name">${esc(r.candidate || item.filename)}</h4>
               <span class="engine-tag">${r.engine === "llm" ? "AI 评估" : "本地分析"}</span>
+              <span class="rank-batch" title="第 ${item.batch} 轮入库 ${item.time}">第 ${item.batch} 轮 · ${item.time}</span>
             </div>
             <p class="rank-verdict">${esc(r.verdict || "")}</p>
             <p class="rank-meta">关键词 ${matched.length}/${matched.length + missing.length} · 优点 ${
@@ -504,18 +605,145 @@
           <div class="rank-score">
             <span class="rank-score-num">${r.overall_score}</span><span class="rank-score-unit">分</span>
           </div>
+          <button type="button" class="icon-btn rank-remove" data-remove="${i}" aria-label="从排名中移除 ${esc(
+            r.candidate || item.filename
+          )}" title="从排名中移除">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+          </button>
           ${chevronSvg}
         </article>`;
       })
       .join("");
   }
 
+  /* ---------- 排名历史：本地持久化 / 恢复 / 移除 / 清空 ---------- */
+
+  function saveRank() {
+    if (!state.rankData.length) {
+      clearRankStorage();
+      return;
+    }
+    try {
+      localStorage.setItem(
+        RANK_LS_KEY,
+        JSON.stringify({
+          jd: state.rankJd,
+          batches: state.rankBatches,
+          items: state.rankData.map((d) => ({
+            filename: d.filename,
+            sig: d.sig ?? "", // 文件指纹：页面刷新后重新选择同一文件仍可增量跳过
+            file_id: d.file_id ?? "",
+            resume: d.resume,
+            resume_truncated: d.resume_truncated,
+            batch: d.batch,
+            time: d.time,
+            result: d.result,
+            questions: d.questions ?? null, // 题单随候选人保留，直到使用者主动重新生成
+          })),
+        })
+      );
+    } catch (err) {
+      console.warn("排名历史保存失败（可能超出本地存储限额）：", err);
+    }
+  }
+
+  function clearRankStorage() {
+    try {
+      localStorage.removeItem(RANK_LS_KEY);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  function restoreRank() {
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(RANK_LS_KEY) ?? "null");
+    } catch {
+      saved = null;
+    }
+    if (!saved || !Array.isArray(saved.items)) return;
+    state.rankJd = typeof saved.jd === "string" ? saved.jd : "";
+    state.rankBatches = Number(saved.batches) || 1;
+    state.rankData = saved.items.filter((d) => d && d.filename && d.result && typeof d.result.overall_score === "number");
+    if (!state.rankData.length) {
+      clearRankStorage();
+      return;
+    }
+    // 还原当次排名所用 JD，保证追加评估口径一致（不覆盖用户已输入的内容）
+    if (state.rankJd && els.jdInput.value.trim() === "") {
+      els.jdInput.value = state.rankJd;
+      updateJdCount();
+    }
+    renderRankList();
+    els.rankNotice.hidden = true;
+    els.resultsRank.hidden = state.view !== "interviewer";
+    if (state.view === "interviewer") observeReveals(els.resultsRank);
+    toast(
+      `已恢复上次的候选人排名（${state.rankData.length} 位 · 累计 ${state.rankBatches} 轮），可继续追加新候选人`,
+      "info",
+      4200
+    );
+  }
+
+  function removeRankItem(i) {
+    const item = state.rankData[i];
+    if (!item) return;
+    const name = item.result.candidate || item.filename;
+    state.rankData.splice(i, 1);
+    if (!state.rankData.length) {
+      state.rankJd = "";
+      state.rankBatches = 0;
+      clearRankStorage();
+      els.resultsRank.hidden = true;
+      toast(`已移除 ${name}，排名已清空`, "info", 2600);
+      return;
+    }
+    saveRank();
+    renderRankList();
+    renderBatchList(); // 移除后该简历重新变为「待评估」，提示随之刷新
+    toast(`已移除 ${name}，剩余 ${state.rankData.length} 位`, "info", 2400);
+  }
+
+  let rankClearArmed = null;
+  els.rankClear.addEventListener("click", () => {
+    // 两步确认：首次点击变为确认态，3 秒内再次点击才执行
+    if (!rankClearArmed) {
+      els.rankClear.classList.add("btn-danger-armed");
+      els.rankClear.textContent = "再次点击确认清空";
+      rankClearArmed = setTimeout(() => {
+        rankClearArmed = null;
+        els.rankClear.classList.remove("btn-danger-armed");
+        els.rankClear.textContent = "清空排名";
+      }, 3000);
+      return;
+    }
+    clearTimeout(rankClearArmed);
+    rankClearArmed = null;
+    els.rankClear.classList.remove("btn-danger-armed");
+    els.rankClear.textContent = "清空排名";
+    state.rankData = [];
+    state.rankJd = "";
+    state.rankBatches = 0;
+    state.detailIndex = -1;
+    clearRankStorage();
+    els.resultsRank.hidden = true;
+    renderBatchList(); // 排名清空后，队列中的简历全部回到「待评估」
+    toast("已清空候选人排名历史", "info", 2400);
+  });
+
   els.rankList.addEventListener("click", (e) => {
+    const removeBtn = e.target.closest(".rank-remove");
+    if (removeBtn) {
+      removeRankItem(Number(removeBtn.dataset.remove));
+      return;
+    }
     const card = e.target.closest(".rank-card[data-index]");
     if (card) openDetail(Number(card.dataset.index));
   });
   els.rankList.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
+    if (e.target.closest("button")) return; // 按钮自带键盘激活，不当作卡片打开
     const card = e.target.closest?.(".rank-card[data-index]");
     if (card) {
       e.preventDefault();
@@ -669,8 +897,10 @@
     clearFile();
     state.batchFiles = [];
     state.rankData = [];
+    state.rankJd = "";
+    state.rankBatches = 0;
     state.detailIndex = -1;
-    state.questionsCache = {};
+    clearRankStorage();
     renderBatchList();
     updateJdCount();
     els.results.hidden = true;
@@ -696,7 +926,7 @@
     els.detailRank.textContent = i + 1;
     els.detailRank.className = "rank-badge" + (i < 3 ? ` rank-${i + 1}` : "");
     els.detailName.textContent = r.candidate || item.filename;
-    els.detailFile.textContent = item.filename;
+    els.detailFile.textContent = item.filename + (item.batch ? ` · 第 ${item.batch} 轮入库 · ${item.time}` : "");
     els.detailScorebar.dataset.tone = toneOf(r.overall_score);
     els.detailScore.textContent = `${r.overall_score} 分`;
     els.detailVerdict.textContent = r.verdict || "";
@@ -751,14 +981,23 @@
       <div class="chip-set chip-good">${matched.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>
       <div class="chip-set chip-warn detail-kw-missing">${missing.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>`;
 
-    const cacheKey = `${i}:${item.filename}`;
-    const cached = state.questionsCache[cacheKey];
-    if (cached) {
-      renderQuestions(cached);
+    // 简历附件：默认收起，展开后内嵌展示原件（PDF 原生阅读器 / DOCX、TXT 转 HTML 预览）
+    const hasFile = Boolean(item.file_id);
+    const hasResumeText = Boolean((item.resume ?? "").trim());
+    els.resumeFrame.src = "";
+    els.resumeFrame.hidden = !hasFile;
+    els.resumeMissing.hidden = hasFile || !hasResumeText;
+    els.resumeToggle.hidden = !hasFile && !hasResumeText;
+    setResumeOpen(false);
+
+    // 题单随候选人持久保留，直到使用者主动重新生成
+    if (item.questions) {
+      renderQuestions(item.questions);
     } else {
       els.qgResult.innerHTML =
         '<p class="empty-note">点击右上角按钮，基于岗位 JD 与该候选人简历生成结构化面试题（含考察意图与参考答案要点）</p>';
     }
+    els.qgGenerateLabel.textContent = item.questions ? "重新生成全套题" : "基于 JD 与该简历生成面试题";
 
     els.detailOverlay.hidden = false;
     document.body.style.overflow = "hidden";
@@ -776,6 +1015,25 @@
     if (e.target === els.detailOverlay) closeDetail();
   });
 
+  function setResumeOpen(open) {
+    els.resumeBody.hidden = !open;
+    els.resumeToggle.setAttribute("aria-expanded", String(open));
+    els.resumeToggleLabel.textContent = open ? "收起简历" : "查看简历";
+    els.resumeToggle.classList.toggle("is-open", open);
+    if (open) {
+      // 懒加载：展开时才加载附件，避免每次打开弹窗都发起请求
+      const item = state.rankData[state.detailIndex];
+      const fileId = item?.file_id;
+      if (fileId && !els.resumeFrame.src.includes(fileId)) {
+        els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(fileId)}`;
+      }
+    }
+  }
+
+  els.resumeToggle.addEventListener("click", () => {
+    setResumeOpen(els.resumeBody.hidden);
+  });
+
   function renderQuestions(data) {
     const focus = (data.focus_areas ?? []).map(esc).join(" · ");
     els.qgResult.innerHTML = `
@@ -788,6 +1046,10 @@
           <div class="q-head">
             <span class="q-index">${i + 1}</span>
             <span class="q-cat">${esc(q.category)}</span>
+            <button type="button" class="q-regen" data-qregen="${i}" aria-label="重新生成第 ${i + 1} 题" title="对这题不满意？换一题">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
+              <span>换一题</span>
+            </button>
           </div>
           <p class="q-text">${esc(q.question)}</p>
           ${q.intent ? `<p class="q-intent"><b>考察点</b>${esc(q.intent)}</p>` : ""}
@@ -809,11 +1071,6 @@
       toast("该候选人简历内容不可用");
       return;
     }
-    const cacheKey = `${state.detailIndex}:${item.filename}`;
-    if (state.questionsCache[cacheKey]) {
-      renderQuestions(state.questionsCache[cacheKey]);
-      return;
-    }
 
     els.qgGenerate.disabled = true;
     els.qgGenerateLabel.textContent = "生成中…";
@@ -826,14 +1083,62 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
-      state.questionsCache[cacheKey] = data;
+      item.questions = data; // 题单随候选人保存，直到使用者主动重新生成
+      saveRank();
       renderQuestions(data);
     } catch (err) {
       els.qgResult.innerHTML = "";
       toast(err.message || "生成失败，请稍后重试");
     } finally {
       els.qgGenerate.disabled = false;
-      els.qgGenerateLabel.textContent = "基于 JD 与该简历生成面试题";
+      els.qgGenerateLabel.textContent = item?.questions ? "重新生成全套题" : "基于 JD 与该简历生成面试题";
+    }
+  });
+
+  // 单题重新生成：面试官对某一题不满意时仅替换该题，其余题目保持不变
+  els.qgResult.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".q-regen");
+    if (!btn || btn.classList.contains("is-busy")) return;
+    const item = state.rankData[state.detailIndex];
+    const qd = item?.questions;
+    const idx = Number(btn.dataset.qregen);
+    const cur = qd?.questions?.[idx];
+    if (!item || !qd || !cur) return;
+
+    const jd = els.jdInput.value.trim();
+    if (jd.length < 30) {
+      toast("岗位 JD 内容不足，无法重新生成");
+      return;
+    }
+    if (!item.resume) {
+      toast("该候选人简历内容不可用");
+      return;
+    }
+
+    btn.classList.add("is-busy");
+    btn.querySelector("span").textContent = "生成中…";
+    try {
+      const res = await fetch("/api/interview-question-regenerate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jd,
+          resume: item.resume,
+          question: cur.question,
+          category: cur.category ?? "",
+          others: qd.questions.filter((_, i) => i !== idx).map((q) => q.question),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
+      qd.questions[idx] = data.question;
+      saveRank();
+      renderQuestions(qd);
+      if (data.notice) toast(data.notice, "info", 3800);
+      else toast(`已替换第 ${idx + 1} 题`, "success", 2200);
+    } catch (err) {
+      renderQuestions(qd); // 恢复按钮状态
+      toast(err.message || "生成失败，请稍后重试");
     }
   });
 
@@ -927,7 +1232,7 @@
       if (!res.ok || !data?.ok) throw new Error(data?.message ?? "获取模型列表失败");
       modelItems = data.models ?? [];
       renderModelDropdown();
-      showCfgStatus(`已获取 ${modelItems.length} 个模型，点击「模型名称」输入框选择`, true);
+      showCfgStatus(data.message ?? `已获取 ${modelItems.length} 个模型，点击「模型名称」输入框选择`, true);
     } catch (err) {
       modelsLoadedKey = "";
       if (manual) showCfgStatus(err.message, false); // 自动模式失败不打扰，仍可手动填写
@@ -1069,6 +1374,16 @@
       els.cfgKey.focus();
       return;
     }
+    if (!baseUrl) {
+      showCfgStatus("请填写 API Base URL（首次配置无默认值，需完整填写）", false);
+      els.cfgBaseurl.focus();
+      return;
+    }
+    if (!model) {
+      showCfgStatus("请填写或选择模型名称", false);
+      els.cfgModel.focus();
+      return;
+    }
     els.cfgSave.disabled = true;
     els.cfgSave.textContent = "保存中…";
     try {
@@ -1132,5 +1447,6 @@
   updateJdCount();
   refreshEngine();
   setView("candidate");
+  restoreRank(); // 恢复上次保存的候选人排名历史
   observeReveals();
 })();
