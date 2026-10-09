@@ -10,6 +10,12 @@
     jdInput: $("#jd-input"),
     jdCount: $("#jd-count"),
     jdSampleBtn: $("#jd-sample-btn"),
+    jdCardDesc: $("#jd-card-desc"),
+    jdOptionalTag: $("#jd-optional-tag"),
+    scoreEyebrowText: $("#score-eyebrow-text"),
+    kwGroupTitle: $("#kw-group-title"),
+    kwMatchedLabel: $("#kw-matched-label"),
+    kwMissingLabel: $("#kw-missing-label"),
     dropzone: $("#dropzone"),
     fileInput: $("#file-input"),
     fileChip: $("#file-chip"),
@@ -89,6 +95,29 @@
     qgGenerate: $("#qg-generate"),
     qgGenerateLabel: $("#qg-generate-label"),
     qgResult: $("#qg-result"),
+    // 优化点详情弹窗
+    impOverlay: $("#imp-overlay"),
+    impClose: $("#imp-close"),
+    impIndex: $("#imp-index"),
+    impTitle: $("#imp-title"),
+    impAction: $("#imp-action"),
+    impPriority: $("#imp-priority"),
+    impDetail: $("#imp-detail"),
+    impSuggestionWrap: $("#imp-suggestion-wrap"),
+    impSuggestionText: $("#imp-suggestion-text"),
+    impOriginalBlock: $("#imp-original-block"),
+    impOriginal: $("#imp-original"),
+    impRevisedBlock: $("#imp-revised-block"),
+    impRevised: $("#imp-revised"),
+    impCopy: $("#imp-copy"),
+    impNoDiff: $("#imp-no-diff"),
+    // 岗位推荐
+    jobBlock: $("#job-block"),
+    jobList: $("#job-list"),
+    jobMeta: $("#job-meta"),
+    jobRetry: $("#job-retry"),
+    jobNotice: $("#job-notice"),
+    jobGap: $("#job-gap"),
   };
 
   const state = {
@@ -101,10 +130,25 @@
     rankJd: "",
     rankBatches: 0,
     detailIndex: -1,
+    impItem: null, // 弹窗中展示的待优化点（供复制按钮取改写文本）
+    lastCheck: null, // 求职者视角最近一次分析结果（含文件指纹，持久化到本地）
   };
   const ALLOWED = [".pdf", ".docx", ".txt", ".md"];
   const RING_C = 527.79; // 2πr, r=84
   const RANK_LS_KEY = "resumelens.rank.v1"; // 候选人排名历史（本地存储）
+  const CANDIDATE_LS_KEY = "resumelens.candidate.v1"; // 求职者视角最近一次分析结果（本地存储）
+  const PRIORITY_LABELS = { high: "高优先", medium: "中优先", low: "低优先" };
+  const ACTION_LABELS = { 改写: "改写", 精简: "精简", 删除: "删除", 补充: "补充" };
+  // 招聘平台搜索直达链接（关键词预填，新标签页打开；平台均无公开 API，推荐为方向+搜索词而非实时职位）
+  const JOB_PLATFORMS = [
+    { name: "BOSS直聘", build: (kw) => `https://www.zhipin.com/web/geek/job?query=${encodeURIComponent(kw)}` },
+    { name: "智联招聘", build: (kw) => `https://sou.zhaopin.com/?kw=${encodeURIComponent(kw)}` },
+    { name: "前程无忧", build: (kw) => `https://we.51job.com/pc/search?keyword=${encodeURIComponent(kw)}` },
+    { name: "猎聘", build: (kw) => `https://www.liepin.com/zhaopin/?key=${encodeURIComponent(kw)}` },
+  ];
+  const extLinkSvg =
+    '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg>';
+  let recheckArmed = null; // 重复体检二次确认的定时器
 
   /* ---------- 工具 ---------- */
 
@@ -195,11 +239,14 @@
   function updateJdCount() {
     const n = els.jdInput.value.trim().length;
     els.jdCount.textContent = `${n.toLocaleString()} 字`;
-    els.jdCount.classList.toggle("is-ok", n >= 30);
+    // 求职者视角下 0 字与 ≥30 字均为合法状态，均视为就绪
+    const ready = n >= 30 || (state.view === "candidate" && n === 0);
+    els.jdCount.classList.toggle("is-ok", ready);
   }
 
   els.jdInput.addEventListener("input", () => {
     updateJdCount();
+    refreshEvaluateLabel();
     // JD 变化会影响增量判定（换 JD 需全量重评），同步刷新队列底部的待评估提示
     if (state.view === "interviewer" && state.batchFiles.length) renderBatchList();
   });
@@ -207,6 +254,7 @@
   els.jdSampleBtn.addEventListener("click", () => {
     els.jdInput.value = SAMPLE_JD;
     updateJdCount();
+    refreshEvaluateLabel();
     toast("已填入示例岗位 JD，可替换为你的目标岗位", "info", 2600);
   });
 
@@ -236,13 +284,49 @@
     els.fileChip.hidden = !(isCandidate && state.file);
     els.batchFileList.hidden = isCandidate || state.batchFiles.length === 0;
     els.dropzone.classList.toggle("has-file", isCandidate && !!state.file);
-    els.evaluateLabel.textContent = isCandidate ? "开始匹配分析" : "批量评估排名";
-    els.results.hidden = true;
+    // JD 卡片说明：求职者视角可选（留空 = 简历体检），面试官视角仍必填
+    els.jdOptionalTag.hidden = !isCandidate;
+    els.jdCardDesc.textContent = isCandidate
+      ? "粘贴完整职位描述可做岗位匹配；留空则仅对简历做通用体检"
+      : "粘贴完整的职位描述，越完整分析越准（批量评估必需）";
+    els.results.hidden = !(view === "candidate" && state.lastCheck); // 切回求职者视角时恢复保留的分析结果
     els.resultsRank.hidden = !(view === "interviewer" && state.rankData.length > 0);
+    updateJdCount();
+    refreshEvaluateLabel();
   }
 
   els.viewCandidate.addEventListener("click", () => setView("candidate"));
   els.viewInterviewer.addEventListener("click", () => setView("interviewer"));
+
+  // 提交按钮文案：面试官视角为批量评估；求职者视角看 JD 与上次结果切换「开始/重新·匹配分析/简历体检」
+  const currentCandidateMode = () => (els.jdInput.value.trim().length >= 30 ? "match" : "review");
+
+  // 当前输入（模式 + JD + 简历文件指纹）是否与最近一次已保留的结果完全一致
+  function sameInputAsLastCheck(mode = currentCandidateMode()) {
+    const lc = state.lastCheck;
+    return Boolean(
+      lc &&
+        lc.mode === mode &&
+        lc.jd === els.jdInput.value.trim() &&
+        state.file &&
+        lc.fileSig &&
+        fileSig(state.file) === lc.fileSig
+    );
+  }
+
+  function refreshEvaluateLabel() {
+    if (state.busy) return;
+    if (state.view === "interviewer") {
+      els.evaluateLabel.textContent = "批量评估排名";
+      return;
+    }
+    const mode = currentCandidateMode();
+    if (sameInputAsLastCheck(mode)) {
+      els.evaluateLabel.textContent = mode === "review" ? "重新体检" : "重新分析";
+    } else {
+      els.evaluateLabel.textContent = mode === "review" ? "开始简历体检" : "开始匹配分析";
+    }
+  }
 
   /* ---------- 面试官模式：多份文件管理 ---------- */
 
@@ -357,6 +441,7 @@
     els.fileChip.hidden = false;
     els.dropzone.classList.add("has-file");
     els.dropzone.setAttribute("aria-label", `已选择文件：${file.name}，点击可重新选择`);
+    refreshEvaluateLabel(); // 换文件后与上次结果的对比关系变化，刷新按钮文案
   }
 
   function clearFile() {
@@ -365,6 +450,7 @@
     els.fileChip.hidden = true;
     els.dropzone.classList.remove("has-file");
     els.dropzone.setAttribute("aria-label", "点击或拖拽上传简历文件，支持 PDF、DOCX、TXT、MD，不超过 10 MB");
+    refreshEvaluateLabel();
   }
 
   els.dropzone.addEventListener("click", () => els.fileInput.click());
@@ -410,16 +496,25 @@
   function setLoading(loading, label) {
     state.busy = loading;
     els.evaluateBtn.classList.toggle("is-loading", loading);
-    els.evaluateLabel.textContent =
-      label ?? (state.view === "candidate" ? "开始匹配分析" : "批量评估排名");
+    if (label) {
+      els.evaluateLabel.textContent = label;
+    } else {
+      refreshEvaluateLabel();
+    }
   }
 
   async function evaluate() {
     if (state.busy) return;
 
     const jd = els.jdInput.value.trim();
-    if (jd.length < 30) {
+    // JD 必填仅限面试官视角；求职者视角留空 = 简历体检，但介于 1-29 字时提示补全或清空
+    if (state.view === "interviewer" && jd.length < 30) {
       toast("岗位 JD 至少需要 30 字，请粘贴完整的职位描述");
+      els.jdInput.focus();
+      return;
+    }
+    if (state.view === "candidate" && jd.length > 0 && jd.length < 30) {
+      toast("岗位 JD 不足 30 字：请粘贴完整职位描述做匹配分析，或清空 JD 仅对简历做通用体检");
       els.jdInput.focus();
       return;
     }
@@ -431,11 +526,34 @@
       return;
     }
 
+    // 重复体检守卫：模式、JD、简历文件均与已保留结果完全相同时，需二次确认才重新分析
+    const mode = jd.length >= 30 ? "match" : "review";
+    if (!recheckArmed && sameInputAsLastCheck(mode)) {
+      recheckArmed = setTimeout(() => {
+        recheckArmed = null;
+        els.evaluateBtn.classList.remove("btn-danger-armed");
+        refreshEvaluateLabel();
+      }, 3000);
+      els.evaluateBtn.classList.add("btn-danger-armed");
+      els.evaluateLabel.textContent = mode === "review" ? "简历未变更，仍要重新体检？" : "输入未变更，仍要重新分析？";
+      toast(
+        "附件简历与上次体检时完全相同（未检测到差异），无需重新体检；如简历已修改请重新选择文件，或再次点击按钮强制重检",
+        "info",
+        5600
+      );
+      return;
+    }
+    if (recheckArmed) {
+      clearTimeout(recheckArmed);
+      recheckArmed = null;
+      els.evaluateBtn.classList.remove("btn-danger-armed");
+    }
+
     const form = new FormData();
     form.append("jd", jd);
     form.append("file", state.file);
 
-    setLoading(true, "正在分析…");
+    setLoading(true, jd.length >= 30 ? "正在分析…" : "正在体检简历…");
     try {
       const res = await fetch("/api/evaluate", { method: "POST", body: form });
       let data;
@@ -450,8 +568,19 @@
           : data?.detail;
         throw new Error(detail ?? `请求失败（${res.status}）`);
       }
+      // 保留本次结果（含文件指纹），刷新后可恢复
+      state.lastCheck = {
+        mode,
+        jd,
+        fileSig: fileSig(state.file),
+        fileName: state.file.name,
+        result: data,
+        time: candTimeLabel(),
+      };
+      saveCandidate();
       render(data);
       els.results.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (mode === "review") loadJobRecommend(); // 体检模式：后台生成岗位推荐，不阻塞结果展示
     } catch (err) {
       toast(err.message || "网络错误，请稍后重试");
     } finally {
@@ -532,6 +661,7 @@
       // 同名文件视为同一候选人重新提交：用最新评估覆盖，并作废其面试题缓存
       const idx = state.rankData.findIndex((d) => d.filename === item.filename);
       if (idx >= 0) {
+        deleteResumeFiles([state.rankData[idx].file_id]); // 旧附件已被新版替代，同步删除避免孤儿
         state.rankData[idx] = item; // 新评估覆盖旧记录（含旧题单，简历已变）
         replaced += 1;
       } else {
@@ -655,6 +785,21 @@
     }
   }
 
+  // 通知服务端同步删除附件（排名移除/清空/覆盖时调用）；静默失败——残留文件由 7 天 TTL 兑底清理
+  async function deleteResumeFiles(ids) {
+    const list = (ids ?? []).filter(Boolean);
+    if (!list.length) return;
+    try {
+      await fetch("/api/resume-files", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ file_ids: list }),
+      });
+    } catch {
+      /* 网络失败不阻塞排名操作 */
+    }
+  }
+
   function restoreRank() {
     let saved = null;
     try {
@@ -667,6 +812,7 @@
     state.rankBatches = Number(saved.batches) || 1;
     state.rankData = saved.items.filter((d) => d && d.filename && d.result && typeof d.result.overall_score === "number");
     if (!state.rankData.length) {
+      deleteResumeFiles((saved.items ?? []).map((d) => d?.file_id)); // 存储损坏无效，附件一并清理
       clearRankStorage();
       return;
     }
@@ -769,6 +915,35 @@
   function render(data) {
     els.results.hidden = false;
 
+    // 体检模式（未填 JD）：总分标题与关键词区文案切换
+    const review = data.mode === "review";
+    els.scoreEyebrowText.textContent = review ? "简历质量评分" : "综合匹配度";
+    els.kwGroupTitle.textContent = review ? "核心关键词" : "关键词覆盖";
+    els.kwMatchedLabel.textContent = review ? "简历已呈现" : "已覆盖";
+    els.kwMissingLabel.textContent = review ? "建议补充" : "未覆盖";
+    // 岗位推荐：仅体检模式显示；有缓存直接渲染，否则区分「可重试」与「旧数据无法生成」
+    if (review) {
+      els.jobBlock.hidden = false;
+      els.jobGap.hidden = true;
+      els.jobNotice.hidden = true;
+      if (state.lastCheck?.jobs) {
+        renderJobs();
+      } else if (state.lastCheck?.result?.resume) {
+        // 有简历文本但尚未生成推荐（上次生成失败/中断）：可重试
+        els.jobList.innerHTML = '<p class="empty-note">岗位推荐尚未生成，点击右侧「重新生成」按钮重试</p>';
+        els.jobMeta.textContent = "";
+        els.jobRetry.hidden = false;
+      } else {
+        // 旧版本保留的结果没有简历文本，无法生成推荐：提示重新体检
+        els.jobList.innerHTML =
+          '<p class="empty-note">当前保留的分析结果由旧版本生成，缺少简历文本，无法生成岗位推荐；重新上传简历体检一次即可</p>';
+        els.jobMeta.textContent = "";
+        els.jobRetry.hidden = true;
+      }
+    } else {
+      els.jobBlock.hidden = true;
+    }
+
     // 提示横幅
     if (data.notice) {
       els.noticeBanner.textContent = data.notice;
@@ -800,7 +975,6 @@
       <span class="stat-pill stat-good"><b>${strengths.length}</b> 项优点</span>
       <span class="stat-pill stat-warn"><b>${improvements.length}</b> 项待优化</span>`;
     els.strengthCount.textContent = `${strengths.length} 项`;
-    els.improveCount.textContent = `${improvements.length} 项`;
 
     // 维度卡
     els.dimensionsGrid.innerHTML = (data.dimensions ?? [])
@@ -833,33 +1007,21 @@
           .join("")
       : '<p class="empty-note">未发现明显优势项，建议先补充与岗位相关的经历。</p>';
 
-    // 待优化点
+    // 待优化点（可交互：处理动作徽标 + 展开原文对照）
     els.improvementsList.innerHTML = improvements.length
-      ? improvements
-          .map(
-            (it, i) => `
-          <article class="point-card point-card-warn reveal" style="--reveal-delay:${i * 60}ms">
-            <div class="point-head">
-              <span class="point-index">${i + 1}</span>
-              <h4 class="point-title">${esc(it.title)}</h4>
-              ${it.priority ? `<span class="priority-pill" data-priority="${esc(it.priority)}">${({ high: "高优先", medium: "中优先", low: "低优先" })[it.priority] ?? esc(it.priority)}</span>` : ""}
-            </div>
-            <p class="point-detail">${esc(it.detail)}</p>
-            ${it.suggestion ? `<div class="point-suggestion"><span class="sug-label">建议</span><span class="sug-text">${esc(it.suggestion)}</span></div>` : ""}
-          </article>`
-          )
-          .join("")
+      ? improvements.map((it, i) => improvementCardHtml(it, i, { reveal: true })).join("")
       : '<p class="empty-note">未发现明显短板，保持现状即可。</p>';
+    updateImproveCount();
 
     // 关键词
     els.kwMatchedCount.textContent = `${matched.length} 项`;
     els.kwMissingCount.textContent = `${missing.length} 项`;
     els.kwMatched.innerHTML = matched.length
       ? matched.map((k, i) => `<span class="kw-chip" style="animation-delay:${i * 35}ms">${esc(k)}</span>`).join("")
-      : '<span class="empty-note">未检测到已覆盖的 JD 关键词</span>';
+      : `<span class="empty-note">${review ? "未从简历中识别出核心关键词" : "未检测到已覆盖的 JD 关键词"}</span>`;
     els.kwMissing.innerHTML = missing.length
       ? missing.map((k, i) => `<span class="kw-chip" style="animation-delay:${i * 35}ms">${esc(k)}</span>`).join("")
-      : '<span class="empty-note">JD 核心关键词全部覆盖</span>';
+      : `<span class="empty-note">${review ? "暂无补充建议，可结合目标岗位补齐方向" : "JD 核心关键词全部覆盖"}</span>`;
 
     // 改写示范
     if (data.rewritten_summary) {
@@ -881,6 +1043,247 @@
     }, 1200);
   }
 
+  /* ---------- 待优化点：点击卡片打开详情弹窗 ---------- */
+
+  // 构建待优化点卡片：点击打开详情弹窗；reveal 控制入场动画（面试官详情弹窗内不启用）
+  function improvementCardHtml(it, i, { reveal = false } = {}) {
+    const action = ACTION_LABELS[it.action] ?? "";
+    return `
+      <article class="point-card point-card-warn${reveal ? " reveal" : ""}" style="--reveal-delay:${i * 60}ms" data-imp="${i}" tabindex="0" role="button"
+               aria-label="查看待优化点详情：${esc(it.title)}">
+        <div class="point-head">
+          <span class="point-index">${i + 1}</span>
+          <h4 class="point-title">${esc(it.title)}</h4>
+          ${action ? `<span class="action-pill" data-action="${action}">${action}</span>` : ""}
+          ${it.priority ? `<span class="priority-pill" data-priority="${esc(it.priority)}">${PRIORITY_LABELS[it.priority] ?? esc(it.priority)}</span>` : ""}
+          <svg class="point-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </div>
+        <p class="point-detail">${esc(it.detail)}</p>
+        ${it.suggestion ? `<div class="point-suggestion"><span class="sug-label">建议</span><span class="sug-text">${esc(it.suggestion)}</span></div>` : ""}
+      </article>`;
+  }
+
+  function updateImproveCount() {
+    const n = state.lastCheck?.result?.improvements?.length ?? 0;
+    els.improveCount.textContent = `${n} 项`;
+  }
+
+  // 面试官详情弹窗专用：只读摘要卡（仅标题 + 动作/优先级 + 问题描述，无建议、不可点击）
+  function improvementBriefHtml(it, i) {
+    const action = ACTION_LABELS[it.action] ?? "";
+    return `
+      <article class="point-card point-card-warn">
+        <div class="point-head">
+          <span class="point-index">${i + 1}</span>
+          <h4 class="point-title">${esc(it.title)}</h4>
+          ${action ? `<span class="action-pill" data-action="${action}">${action}</span>` : ""}
+          ${it.priority ? `<span class="priority-pill" data-priority="${esc(it.priority)}">${PRIORITY_LABELS[it.priority] ?? esc(it.priority)}</span>` : ""}
+        </div>
+        <p class="point-detail">${esc(it.detail)}</p>
+      </article>`;
+  }
+
+  // 打开优化点详情弹窗（it 为完整待优化项；i 仅用于序号展示）
+  function openImprovement(it, i) {
+    if (!it) return;
+    state.impItem = it;
+    els.impIndex.textContent = i + 1;
+    els.impTitle.textContent = it.title ?? "待优化点";
+    const action = ACTION_LABELS[it.action] ?? "";
+    els.impAction.hidden = !action;
+    if (action) {
+      els.impAction.textContent = action;
+      els.impAction.dataset.action = action;
+    }
+    const pr = it.priority ?? "";
+    els.impPriority.hidden = !pr;
+    if (pr) {
+      els.impPriority.dataset.priority = pr;
+      els.impPriority.textContent = PRIORITY_LABELS[pr] ?? pr;
+    }
+    els.impDetail.textContent = it.detail ?? "";
+    els.impSuggestionWrap.hidden = !it.suggestion;
+    els.impSuggestionText.textContent = it.suggestion ?? "";
+    els.impOriginalBlock.hidden = !it.original_text;
+    els.impOriginal.textContent = it.original_text ?? "";
+    els.impRevisedBlock.hidden = !it.revised_text;
+    els.impRevised.textContent = it.revised_text ?? "";
+    els.impNoDiff.hidden = Boolean(it.original_text || it.revised_text);
+    els.impOverlay.hidden = false;
+    els.impClose.focus();
+  }
+
+  function closeImprovement() {
+    els.impOverlay.hidden = true;
+    state.impItem = null;
+  }
+
+  els.impClose.addEventListener("click", closeImprovement);
+  els.impOverlay.addEventListener("click", (e) => {
+    if (e.target === els.impOverlay) closeImprovement();
+  });
+  els.impCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(state.impItem?.revised_text ?? "");
+      toast("已复制优化后的文字", "success", 2200);
+    } catch {
+      toast("复制失败，请手动选择文本复制");
+    }
+  });
+
+  // 求职者结果区：点击/回车待优化点卡片打开详情弹窗
+  els.improvementsList.addEventListener("click", (e) => {
+    const card = e.target.closest(".point-card[data-imp]");
+    if (card) {
+      const idx = Number(card.dataset.imp);
+      openImprovement(state.lastCheck?.result?.improvements?.[idx], idx);
+    }
+  });
+  els.improvementsList.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const card = e.target.closest?.(".point-card[data-imp]");
+    if (card) {
+      e.preventDefault();
+      const idx = Number(card.dataset.imp);
+      openImprovement(state.lastCheck?.result?.improvements?.[idx], idx);
+    }
+  });
+
+  /* ---------- 求职者视角：结果保留 / 恢复 / 重复体检守卫 ---------- */
+
+  function candTimeLabel(d = new Date()) {
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    return `${mm}-${dd} ${hh}:${mi}`;
+  }
+
+  function saveCandidate() {
+    if (!state.lastCheck) {
+      clearCandidateStorage();
+      return;
+    }
+    try {
+      localStorage.setItem(CANDIDATE_LS_KEY, JSON.stringify(state.lastCheck));
+    } catch (err) {
+      console.warn("分析结果保存失败（可能超出本地存储限额）：", err);
+    }
+  }
+
+  function clearCandidateStorage() {
+    try {
+      localStorage.removeItem(CANDIDATE_LS_KEY);
+    } catch {
+      /* 忽略 */
+    }
+  }
+
+  function restoreCandidate() {
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(CANDIDATE_LS_KEY) ?? "null");
+    } catch {
+      saved = null;
+    }
+    if (!saved || !saved.result || typeof saved.result.overall_score !== "number") return;
+    state.lastCheck = saved;
+    if (saved.mode === "match" && saved.jd && els.jdInput.value.trim() === "") {
+      els.jdInput.value = saved.jd;
+      updateJdCount();
+    }
+    render(saved.result);
+    const label = saved.mode === "review" ? "简历体检" : "岗位匹配分析";
+    const prefix = `已保留上次${label}结果（${saved.fileName || "简历"}${saved.time ? " · " + saved.time : ""}）；简历有修改后点击下方「重新体检」更新，未变更时无需重检`;
+    els.noticeBanner.textContent = saved.result.notice ? `${prefix}。${saved.result.notice}` : prefix;
+    els.noticeBanner.hidden = false;
+    observeReveals(els.results);
+    refreshEvaluateLabel();
+    toast(`已恢复上次${label}结果，可继续查看或修改后重新分析`, "info", 4200);
+  }
+
+  /* ---------- 岗位推荐（体检后自动生成，随结果保留） ---------- */
+
+  function renderJobs() {
+    const jobs = state.lastCheck?.jobs;
+    els.jobBlock.hidden = !(state.lastCheck?.mode === "review");
+    els.jobNotice.hidden = !jobs?.notice;
+    els.jobNotice.textContent = jobs?.notice ?? "";
+    const positions = jobs?.positions ?? [];
+    els.jobMeta.textContent = positions.length
+      ? `${positions.length} 个方向 · ${jobs.engine === "llm" ? "AI 推荐" : "本地推荐"}`
+      : "";
+    els.jobRetry.hidden = true;
+    els.jobList.innerHTML = positions.length
+      ? positions
+          .map((p, i) => {
+            const kw = (p.search_keywords ?? [])[0] || p.title || "";
+            const metaLine = [p.industry, p.level, (p.cities ?? []).join(" / ")]
+              .filter(Boolean)
+              .map(esc)
+              .join(" · ");
+            return `
+        <article class="job-card reveal" style="--reveal-delay:${i * 60}ms">
+          <div class="job-head">
+            <h4 class="job-title">${esc(p.title)}</h4>
+            ${p.salary_range ? `<span class="job-salary">${esc(p.salary_range)}</span>` : ""}
+          </div>
+          ${metaLine ? `<p class="job-meta-line">${metaLine}</p>` : ""}
+          ${p.match_reason ? `<p class="job-reason">${esc(p.match_reason)}</p>` : ""}
+          ${(p.search_keywords ?? []).length ? `<div class="chip-set job-kws">${(p.search_keywords ?? []).map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("")}</div>` : ""}
+          <div class="job-platforms">
+            ${JOB_PLATFORMS.map((pf) => `<a class="job-plat-btn" href="${pf.build(kw)}" target="_blank" rel="noopener noreferrer">${pf.name}${extLinkSvg}</a>`).join("")}
+          </div>
+        </article>`;
+          })
+          .join("")
+      : '<p class="empty-note">未生成岗位推荐，可点击「重新生成」重试</p>';
+    const gaps = jobs?.gap_skills ?? [];
+    els.jobGap.hidden = !gaps.length;
+    if (gaps.length) {
+      els.jobGap.innerHTML = `<b>扩大岗位选择面，建议补齐：</b>${gaps.map(esc).join("、")}`;
+    }
+    observeReveals(els.jobBlock);
+  }
+
+  async function loadJobRecommend() {
+    const lc = state.lastCheck;
+    if (!lc || lc.mode !== "review") return;
+    if (!lc.result?.resume) {
+      // 旧版本保留的结果没有简历文本：给出明确反馈而非静默返回
+      els.jobList.innerHTML =
+        '<p class="empty-note">当前保留的分析结果由旧版本生成，缺少简历文本，无法生成岗位推荐；重新上传简历体检一次即可</p>';
+      els.jobRetry.hidden = true;
+      toast("该结果由旧版本生成，缺少简历文本；重新体检一次即可生成岗位推荐", "info", 5200);
+      return;
+    }
+    els.jobBlock.hidden = false;
+    els.jobList.innerHTML = '<div class="q-loading">正在根据简历推荐岗位方向与搜索关键词，AI 模式约需半分钟…</div>';
+    els.jobMeta.textContent = "";
+    els.jobRetry.hidden = true;
+    els.jobNotice.hidden = true;
+    els.jobGap.hidden = true;
+    try {
+      const res = await fetch("/api/job-recommend", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume: lc.result.resume }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
+      lc.jobs = data;
+      saveCandidate();
+      renderJobs();
+      toast(`已生成 ${data.positions?.length ?? 0} 个岗位方向推荐`, "success", 2600);
+    } catch (err) {
+      els.jobList.innerHTML = '<p class="empty-note">岗位推荐生成失败，点击「重新生成」重试</p>';
+      els.jobRetry.hidden = false;
+      toast(err.message || "岗位推荐生成失败，请稍后重试");
+    }
+  }
+
+  els.jobRetry.addEventListener("click", loadJobRecommend);
+
   /* ---------- 复制 / 重置 ---------- */
 
   els.copySummary.addEventListener("click", async () => {
@@ -901,8 +1304,12 @@
     state.rankBatches = 0;
     state.detailIndex = -1;
     clearRankStorage();
+    state.lastCheck = null;
+    clearCandidateStorage();
+    els.jobBlock.hidden = true;
     renderBatchList();
     updateJdCount();
+    refreshEvaluateLabel();
     els.results.hidden = true;
     els.resultsRank.hidden = true;
     els.results.querySelectorAll(".reveal").forEach((el) => el.classList.remove("is-visible"));
@@ -959,20 +1366,7 @@
       : '<p class="empty-note">无</p>';
 
     els.detailImprovements.innerHTML = (r.improvements ?? []).length
-      ? (r.improvements ?? [])
-          .slice(0, 4)
-          .map(
-            (it, idx) => `
-          <article class="point-card point-card-warn">
-            <div class="point-head">
-              <span class="point-index">${idx + 1}</span><h4 class="point-title">${esc(it.title)}</h4>
-              ${it.priority ? `<span class="priority-pill" data-priority="${esc(it.priority)}">${({ high: "高优先", medium: "中优先", low: "低优先" })[it.priority] ?? esc(it.priority)}</span>` : ""}
-            </div>
-            <p class="point-detail">${esc(it.detail)}</p>
-            ${it.suggestion ? `<div class="point-suggestion"><span class="sug-label">建议</span><span class="sug-text">${esc(it.suggestion)}</span></div>` : ""}
-          </article>`
-          )
-          .join("")
+      ? (r.improvements ?? []).slice(0, 4).map((it, idx) => improvementBriefHtml(it, idx)).join("")
       : '<p class="empty-note">无</p>';
 
     const matched = r.matched_keywords ?? [];
@@ -1005,6 +1399,7 @@
   }
 
   function closeDetail() {
+    if (!els.impOverlay.hidden) closeImprovement(); // 详情关闭时叠加的优化点弹窗一并关闭
     els.detailOverlay.hidden = true;
     document.body.style.overflow = "";
     state.detailIndex = -1;
@@ -1189,8 +1584,9 @@
   // 仅允许 X 按钮与 Esc 关闭，点击遮罩空白处不关闭（避免误触丢失已填内容）
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
-      // 优先关闭候选人详情，其次关闭设置弹窗
-      if (!els.detailOverlay.hidden) closeDetail();
+      // 优先关闭优化点详情，其次候选人详情，最后设置弹窗
+      if (!els.impOverlay.hidden) closeImprovement();
+      else if (!els.detailOverlay.hidden) closeDetail();
       else if (!els.settingsOverlay.hidden) closeSettings();
     }
   });
@@ -1447,6 +1843,7 @@
   updateJdCount();
   refreshEngine();
   setView("candidate");
+  restoreCandidate(); // 恢复上次保留的分析结果（含重点标记）
   restoreRank(); // 恢复上次保存的候选人排名历史
   observeReveals();
 })();

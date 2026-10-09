@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import time
 import uuid
 from pathlib import Path
 
@@ -15,7 +16,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config
-from .evaluator import evaluate_heuristic, evaluate_with_llm
+from .evaluator import (
+    evaluate_heuristic,
+    evaluate_with_llm,
+    recommend_jobs_heuristic,
+    recommend_jobs_llm,
+)
 from .interview import (
     generate_questions_llm,
     guess_candidate_name,
@@ -48,6 +54,16 @@ class LLMConfigBody(BaseModel):
     model: str = ""
 
 
+def _normalize_result(result: dict) -> dict:
+    """统一兑底字段：待优化点的处理动作与原文/改写示范缺失时补空串，前端据此决定展示。"""
+    for it in result.get("improvements") or []:
+        if isinstance(it, dict):
+            it.setdefault("action", "")
+            it.setdefault("original_text", "")
+            it.setdefault("revised_text", "")
+    return result
+
+
 # 部分 OpenAI 兼容服务（如智谱 GLM）只提供 chat/completions、不提供 /models 列表接口，
 # 此时按域名回退到内置的常用模型建议（仍可手动输入任意模型名）。
 _PROVIDER_MODEL_SUGGESTIONS: list[tuple[str, str, list[str]]] = [
@@ -68,6 +84,14 @@ class QuestionsBody(BaseModel):
     resume: str
 
 
+class JobRecommendBody(BaseModel):
+    resume: str
+
+
+class ResumeFilesDeleteBody(BaseModel):
+    file_ids: list[str]
+
+
 class QuestionRegenBody(BaseModel):
     jd: str
     resume: str
@@ -78,8 +102,23 @@ class QuestionRegenBody(BaseModel):
 
 MAX_BATCH_FILES = 20
 RESUME_PREVIEW_CAP = 12000  # 返回给前端的简历文本上限（面试题生成复用，避免重复上传）
+RESUME_FILE_TTL = 7 * 86400  # 附件保留 7 天：超期孤儿文件在批量评估时惰性清理（前端主动删除为第一优先）
 
 _FILE_ID_RE = re.compile(r"^[0-9a-f]{32}\.(pdf|docx|txt|md)$")
+
+
+def _cleanup_expired_resume_files() -> None:
+    """清理超过保留期的附件（前端未通知删除时的兜底，随批量评估触发一次）。"""
+    now = time.time()
+    try:
+        for p in RESUME_STORE_DIR.iterdir():
+            try:
+                if now - p.stat().st_mtime > RESUME_FILE_TTL:
+                    p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 def _store_resume_file(filename: str, data: bytes) -> str:
@@ -260,13 +299,17 @@ async def save_config(body: LLMConfigBody) -> dict:
 
 @app.post("/api/evaluate")
 async def evaluate(
-    jd: str = Form(...),
+    jd: str = Form(""),
     file: UploadFile | None = File(None),
     resume_text: str = Form(""),
 ) -> JSONResponse:
     jd = jd.strip()
-    if len(jd) < 30:
-        raise HTTPException(422, "岗位 JD 内容过短，请至少粘贴 30 字以上的完整描述")
+    # JD 可选：留空则对简历做无岗位的通用体检；填了但过短则提示补全或清空
+    if 0 < len(jd) < 30:
+        raise HTTPException(
+            422,
+            "岗位 JD 内容过短：请粘贴 30 字以上的完整职位描述，或清空 JD 仅对简历做通用体检",
+        )
 
     # 简历来源：上传文件优先，其次直接粘贴的文本
     if file is not None and file.filename:
@@ -291,6 +334,7 @@ async def evaluate(
             raise HTTPException(502, f"AI 评估失败：{exc}。可重试，或在设置中清除配置改用本地分析")
     else:
         result = evaluate_heuristic(jd, resume)
+    _normalize_result(result)
 
     # OCR 提示：扫描件识别可能有偏差，提前告知用户
     if file is not None and file.filename and file_meta.get("ocr_used"):
@@ -298,6 +342,10 @@ async def evaluate(
         result["notice"] = f"{prefix} {result['notice']}".strip() if result.get("notice") else prefix
 
     # 统一兜底字段，避免前端取值出错
+    # 简历文本随结果返回（截断），供前端复用于岗位推荐，避免重复上传
+    result["resume"] = resume[:RESUME_PREVIEW_CAP]
+    result["resume_truncated"] = len(resume) > RESUME_PREVIEW_CAP
+    result.setdefault("mode", "match" if jd else "review")
     result.setdefault("verdict", "")
     result.setdefault("dimensions", [])
     result.setdefault("strengths", [])
@@ -306,6 +354,40 @@ async def evaluate(
     result.setdefault("missing_keywords", [])
     result.setdefault("rewritten_summary", "")
     return JSONResponse(result)
+
+
+@app.delete("/api/resume-files")
+async def delete_resume_files(body: ResumeFilesDeleteBody) -> dict:
+    """排名移除/清空/覆盖时同步删除对应附件（前端调用；不存在的静默跳过）。"""
+    deleted = 0
+    for fid in body.file_ids[:100]:
+        if not _FILE_ID_RE.fullmatch(fid):
+            continue
+        p = RESUME_STORE_DIR / fid
+        try:
+            if p.is_file():
+                p.unlink()
+                deleted += 1
+        except OSError:
+            pass
+    return {"ok": True, "deleted": deleted}
+
+
+@app.post("/api/job-recommend")
+async def job_recommend(body: JobRecommendBody) -> JSONResponse:
+    """基于简历推荐岗位方向与各平台搜索关键词（体检模式的增值功能，失败可重试、不影响体检结果）。"""
+    resume = body.resume.strip()
+    if len(resume) < 50:
+        raise HTTPException(422, "简历内容过短，无法生成岗位推荐")
+
+    if config.llm_enabled():
+        try:
+            data = await recommend_jobs_llm(resume)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"AI 生成岗位推荐失败：{exc}。可重试")
+        data.setdefault("notice", "")
+        return JSONResponse(data)
+    return JSONResponse(recommend_jobs_heuristic(resume))
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +409,8 @@ async def batch_evaluate(
         raise HTTPException(422, "请上传至少一份简历文件")
     if len(files) > MAX_BATCH_FILES:
         raise HTTPException(422, f"单次最多上传 {MAX_BATCH_FILES} 份简历")
+
+    _cleanup_expired_resume_files()  # 顺带清理超期孤儿附件
 
     llm_on = config.llm_enabled()
     # LLM 并发过高易触发限流，限 2；本地引擎为纯 CPU 计算，放宽到 8
@@ -350,6 +434,7 @@ async def batch_evaluate(
                 result = await evaluate_with_llm(jd, resume)
             else:
                 result = evaluate_heuristic(jd, resume)
+        _normalize_result(result)
 
         result["candidate"] = guess_candidate_name(resume, filename)
         return {
