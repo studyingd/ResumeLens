@@ -161,6 +161,31 @@ JSON 格式硬性要求（违反会导致解析失败）：
 - 所有字符串必须正确闭合。"""
 
 
+# 批量评估专用精简提示词：面试官榜单与只读摘要只需核心字段，
+# 输出 token 约减半→单份时延近似减半（实测 33s → 5-10s 均摊，配合并发 4）
+_BATCH_SYSTEM_PROMPT = """\
+你是一位资深的招聘专家。你将收到一份【岗位JD】和一份【简历】，请站在用人方视角评估这份简历与该岗位的匹配程度。
+评分导向：专业技能与经历同岗位的适配度为主（技能对口、经验深度、成果可验证，约八成权重）；
+格式类问题（乱码、日期错误、罗列重复、排版等）不作为评分依据，最多在待优化点中轻量提一条。
+
+只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字，结构如下：
+{
+  "overall_score": 0-100 整数,
+  "verdict": "一句话总评（40字以内）",
+  "dimensions": [{"name": "技能匹配", "score": 0-100, "comment": "一句话"}, {"name": "经验相关性", ...}, {"name": "成果量化", ...}, {"name": "表达与结构", ...}] 共4项,
+  "strengths": [{"title": "亮点标题", "detail": "具体依据"}] 共3条,
+  "improvements": [{"title": "问题标题", "detail": "问题描述", "priority": "high|medium|low", "action": "改写|精简|删除|补充"}] 共4条,
+  "matched_keywords": ["简历已覆盖的 JD 核心关键词"],
+  "missing_keywords": ["简历缺失的 JD 核心关键词"]
+}
+
+JSON 格式硬性要求（违反会导致解析失败）：
+- 字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；
+- 不要出现尾随逗号（如 ] 或 } 前的逗号）；
+- 所有字符串必须正确闭合；
+- 总分切勿给中间值扎堆，该低就低。"""
+
+
 _REVIEW_SYSTEM_PROMPT = """\
 你是一位资深的招聘专家和简历顾问，拥有 15 年科技行业与人力资源经验。
 你将只收到一份【简历】，没有目标岗位 JD。请站在招聘方视角，对这份简历做一次「内容为王」的深度体检：
@@ -391,10 +416,16 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-async def evaluate_with_llm(jd: str, resume: str) -> dict:
-    """评估简历：提供 JD 时做岗位匹配分析，留空时做无岗位的简历体检。"""
+async def evaluate_with_llm(jd: str, resume: str, lean: bool = False) -> dict:
+    """评估简历：提供 JD 时做岗位匹配分析，留空时做无岗位的简历体检。
+
+    lean=True 为批量评估专用精简模式：输出 token 减半→时延近似减半，
+    仅包含榜单与只读摘要所需字段（无建议/原文对照/简介改写），
+    评分口径与完整模式一致（技能适配度为主、格式不拖累总分）。
+    """
     if jd.strip():
-        system, user, mode = _SYSTEM_PROMPT, f"【岗位JD】\n{jd}\n\n【简历】\n{resume}", "match"
+        system = _BATCH_SYSTEM_PROMPT if lean else _SYSTEM_PROMPT
+        user, mode = f"【岗位JD】\n{jd}\n\n【简历】\n{resume}", "match"
     else:
         system, user, mode = _REVIEW_SYSTEM_PROMPT, f"【简历】\n{resume}", "review"
     # 结构化输出偶发畸形（引号/逗号失误导致 JSON 解析失败），自动重试一次并微调温度换一个采样

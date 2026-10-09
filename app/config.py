@@ -101,6 +101,18 @@ def llm_enabled() -> bool:
     return bool(_state["api_key"])
 
 
+def llm_concurrency() -> int:
+    """批量评估的 LLM 并发上限（环境变量 LLM_CONCURRENCY，默认 4，范圴1-8）。
+
+    并发过高易触发上游限流（429，事务式设计下会终止整批）；
+    若同账号还有其他应用占用配额，可将该值调回 2。
+    """
+    try:
+        return max(1, min(8, int(os.getenv("LLM_CONCURRENCY", "4"))))
+    except ValueError:
+        return 4
+
+
 def save(api_key: str, base_url: str, model: str) -> None:
     """保存页面设置。api_key 为空表示清除本机配置、回到环境变量。"""
     global _state, _source

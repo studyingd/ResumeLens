@@ -413,8 +413,8 @@ async def batch_evaluate(
     _cleanup_expired_resume_files()  # 顺带清理超期孤儿附件
 
     llm_on = config.llm_enabled()
-    # LLM 并发过高易触发限流，限 2；本地引擎为纯 CPU 计算，放宽到 8
-    sem = asyncio.Semaphore(2 if llm_on else 8)
+    # LLM 并发由 LLM_CONCURRENCY 控制（默认 4，撞限流可调回 2）；本地引擎为纯 CPU 计算，放宽到 8
+    sem = asyncio.Semaphore(config.llm_concurrency() if llm_on else 8)
 
     async def evaluate_one(up: UploadFile) -> dict:
         filename = up.filename or "未命名"
@@ -430,8 +430,9 @@ async def batch_evaluate(
 
         async with sem:
             if llm_on:
-                # 事务式：任一份 AI 评估失败立即抛出 → TaskGroup 取消其余任务并终止整批
-                result = await evaluate_with_llm(jd, resume)
+                # 事务式：任一份 AI 评估失败立即抛出 → TaskGroup 取消其余任务并终止整批；
+                # lean=True 走精简提示词（榜单与只读摘要只需核心字段，单份提速约一半）
+                result = await evaluate_with_llm(jd, resume, lean=True)
             else:
                 result = evaluate_heuristic(jd, resume)
         _normalize_result(result)
