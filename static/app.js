@@ -762,6 +762,7 @@
           batches: state.rankBatches,
           items: state.rankData.map((d) => ({
             filename: d.filename,
+            ok: d.ok ?? true, // 解析成功的入榜记录恒为 true；显式保存避免刷新后 undefined 被误判为失败
             sig: d.sig ?? "", // 文件指纹：页面刷新后重新选择同一文件仍可增量跳过
             file_id: d.file_id ?? "",
             resume: d.resume,
@@ -1327,7 +1328,8 @@
   function openDetail(i) {
     const item = state.rankData[i];
     if (!item) return;
-    if (!item.ok) {
+    // 仅显式 ok === false 才是解析失败；早期版本保存的记录无 ok 字段（undefined），视为正常
+    if (item.ok === false) {
       toast(item.error ?? "该简历解析失败，无法查看详情");
       return;
     }
