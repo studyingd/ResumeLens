@@ -644,6 +644,7 @@
 
     // 换了 JD：分数口径不同，开启全新排名历史；同一 JD：追加合并
     if (state.rankJd !== jd) {
+      deleteResumeFiles(state.rankData.map((d) => d.file_id)); // 旧榜作废，附件同步清理
       state.rankJd = jd;
       state.rankData = [];
       state.rankBatches = 0;
@@ -837,6 +838,7 @@
     if (!item) return;
     const name = item.result.candidate || item.filename;
     state.rankData.splice(i, 1);
+    deleteResumeFiles([item.file_id]); // 该候选人已移出排名，附件同步删除
     if (!state.rankData.length) {
       state.rankJd = "";
       state.rankBatches = 0;
@@ -868,6 +870,7 @@
     rankClearArmed = null;
     els.rankClear.classList.remove("btn-danger-armed");
     els.rankClear.textContent = "清空排名";
+    deleteResumeFiles(state.rankData.map((d) => d.file_id)); // 清空排名：附件同步删除
     state.rankData = [];
     state.rankJd = "";
     state.rankBatches = 0;
@@ -1304,6 +1307,7 @@
     state.rankBatches = 0;
     state.detailIndex = -1;
     clearRankStorage();
+    deleteResumeFiles(state.rankData.map((d) => d.file_id)); // 重置：附件同步删除
     state.lastCheck = null;
     clearCandidateStorage();
     els.jobBlock.hidden = true;
