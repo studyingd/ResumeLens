@@ -388,13 +388,41 @@
             </button>
           </div>
           <div class="q-config" id="q-config">
-            <span class="q-config-label">题量配置</span>
-            <label class="qc-field">岗位职责 <input type="number" id="qc-job" min="0" max="10" step="1" value="4" inputmode="numeric" /></label>
-            <label class="qc-field">技能验证 <input type="number" id="qc-skill" min="0" max="10" step="1" value="3" inputmode="numeric" /></label>
-            <label class="qc-field">情景设计 <input type="number" id="qc-scenario" min="0" max="10" step="1" value="2" inputmode="numeric" /></label>
-            <label class="qc-field">软素质 <input type="number" id="qc-soft" min="0" max="10" step="1" value="1" inputmode="numeric" /></label>
+            <span class="q-config-label"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>题量</span>
+            <div class="qc-field">
+              <span class="qc-name">岗位职责</span>
+              <span class="qc-stepper">
+                <button type="button" class="qc-step is-minus" aria-label="岗位职责减少一题">−</button>
+                <input type="number" id="qc-job" min="0" max="10" step="1" value="4" inputmode="numeric" aria-label="岗位职责题量" />
+                <button type="button" class="qc-step is-plus" aria-label="岗位职责增加一题">＋</button>
+              </span>
+            </div>
+            <div class="qc-field">
+              <span class="qc-name">技能验证</span>
+              <span class="qc-stepper">
+                <button type="button" class="qc-step is-minus" aria-label="技能验证减少一题">−</button>
+                <input type="number" id="qc-skill" min="0" max="10" step="1" value="3" inputmode="numeric" aria-label="技能验证题量" />
+                <button type="button" class="qc-step is-plus" aria-label="技能验证增加一题">＋</button>
+              </span>
+            </div>
+            <div class="qc-field">
+              <span class="qc-name">情景设计</span>
+              <span class="qc-stepper">
+                <button type="button" class="qc-step is-minus" aria-label="情景设计减少一题">−</button>
+                <input type="number" id="qc-scenario" min="0" max="10" step="1" value="2" inputmode="numeric" aria-label="情景设计题量" />
+                <button type="button" class="qc-step is-plus" aria-label="情景设计增加一题">＋</button>
+              </span>
+            </div>
+            <div class="qc-field">
+              <span class="qc-name">软素质</span>
+              <span class="qc-stepper">
+                <button type="button" class="qc-step is-minus" aria-label="软素质减少一题">−</button>
+                <input type="number" id="qc-soft" min="0" max="10" step="1" value="1" inputmode="numeric" aria-label="软素质题量" />
+                <button type="button" class="qc-step is-plus" aria-label="软素质增加一题">＋</button>
+              </span>
+            </div>
             <span class="qc-total" id="qc-total">共 10 题</span>
-            <button type="button" class="qc-reset" id="qc-reset">默认</button>
+            <button type="button" class="qc-reset" id="qc-reset">恢复默认</button>
           </div>
           <div id="qg-result"></div>
         </div>

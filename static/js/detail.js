@@ -181,10 +181,33 @@ function qcTotal(counts = readQCounts()) {
 }
 
 function updateQcTotal() {
-  const total = qcTotal();
+  let total = 0;
+  for (const [el] of QC_FIELDS) {
+    const v = Math.min(10, Math.max(0, Math.round(Number(els[el].value) || 0)));
+    els[el].value = v;
+    const field = els[el].closest(".qc-field");
+    field.querySelector(".qc-step.is-minus").disabled = v <= 0;
+    field.querySelector(".qc-step.is-plus").disabled = v >= 10;
+    field.classList.toggle("is-off", v === 0);
+    total += v;
+  }
   els.qcTotal.textContent = `共 ${total} 题`;
   els.qcTotal.classList.toggle("is-zero", total === 0);
 }
+
+// 步进器：− / ＋ 按钮微调（仍可直接输入数值）
+QC_FIELDS.forEach(([el]) => {
+  const input = els[el];
+  const field = input.closest(".qc-field");
+  const bump = (delta) => {
+    const v = Math.min(10, Math.max(0, Math.round(Number(input.value) || 0) + delta));
+    input.value = v;
+    updateQcTotal();
+  };
+  field.querySelector(".qc-step.is-minus").addEventListener("click", () => bump(-1));
+  field.querySelector(".qc-step.is-plus").addEventListener("click", () => bump(1));
+  input.addEventListener("input", updateQcTotal);
+});
 
 function saveQCounts() {
   try {
