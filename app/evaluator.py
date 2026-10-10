@@ -408,7 +408,15 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
         resp = await client.post(url, json=payload, headers=headers)
     if resp.status_code != 200:
         raise RuntimeError(format_llm_http_error(resp.status_code, resp.text))
-    data = resp.json()
+    if "html" in resp.headers.get("content-type", "").lower():
+        raise RuntimeError(
+            f"接口返回的是网页而非 JSON（POST {url}）：Base URL 可能不完整"
+            "（OpenAI 兼容地址通常以 /v1 结尾），或该地址是网关首页而非 API 地址"
+        )
+    try:
+        data = resp.json()
+    except ValueError:
+        raise RuntimeError(f"接口返回内容无法解析为 JSON（POST {url}）：{resp.text[:120]}") from None
     if _is_anthropic(cfg["base_url"]):
         return "".join(
             b.get("text", "") for b in data.get("content", []) if isinstance(b, dict) and b.get("type") == "text"

@@ -211,6 +211,15 @@ async def test_config(body: LLMConfigBody) -> JSONResponse:
             status_code=502,
             content={"ok": False, "message": f"接口返回 {resp.status_code}{('：' + detail) if detail else ''}"},
         )
+    if "html" in resp.headers.get("content-type", "").lower():
+        return JSONResponse(
+            status_code=502,
+            content={
+                "ok": False,
+                "message": "接口返回的是网页而非 JSON：Base URL 可能不完整"
+                "（OpenAI 兼容地址通常以 /v1 结尾，如 http://主机:端口/v1），或该地址是网关首页",
+            },
+        )
     try:
         replied = resp.json()["choices"][0]["message"]["content"]
     except Exception:  # noqa: BLE001
