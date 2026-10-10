@@ -1,6 +1,7 @@
 """简历文本提取：支持 PDF / DOCX / TXT / MD。
 
 扫描件 / 图片型 PDF 无文本层，自动回退到本地 OCR（RapidOCR，离线运行）。
+提取后做乱码质量粗检（meta.low_quality），由上层提示用户核对原件。
 """
 
 from __future__ import annotations
@@ -15,6 +16,21 @@ OCR_ZOOM = 2
 
 # 最小有效文本长度（字符），低于此值视为提取失败
 MIN_TEXT_LEN = 50
+
+# 乱码/替换字符特征：U+FFFD 替换符 + 常见 UTF-8/GBK 转换乱码串
+_GARBLED_MARKERS = ("锟斤拷", "烫烫烫", "锘", "Ã")
+
+
+def _low_quality(text: str) -> bool:
+    """文本质量粗检：乱码/不可识别字符过多（多来自编码转换或 OCR）。
+
+    阈值取「绝对数量 ≥ 5 且占比 ≥ 0.2%」：短文本不误报，
+    轻度乱码只影响个别字段时不拦截，检测到则由上层在结果中提示用户核对原件。
+    """
+    bad = text.count("\ufffd")
+    for m in _GARBLED_MARKERS:
+        bad += text.count(m) * len(m)
+    return bad >= 5 and bad / max(len(text), 1) >= 0.002
 
 
 class ParseError(HTTPException):
@@ -129,4 +145,6 @@ def extract_text(filename: str, data: bytes) -> tuple[str, dict]:
             "未能从文件中提取到足够文本（扫描件 OCR 识别结果过少或内容为空），"
             "请确认文件内容，或改用 DOCX / TXT 格式"
         )
+    if _low_quality(text):
+        meta["low_quality"] = True
     return text, meta

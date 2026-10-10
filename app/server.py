@@ -16,19 +16,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import config
-from .evaluator import (
-    evaluate_heuristic,
-    evaluate_with_llm,
-    recommend_jobs_heuristic,
-    recommend_jobs_llm,
-)
-from .interview import (
-    generate_questions_llm,
-    guess_candidate_name,
-    questions_heuristic,
-    regen_question_heuristic,
-    regen_question_llm,
-)
+from .evaluator import evaluate_with_llm, recommend_jobs_llm
+from .interview import generate_questions_llm, guess_candidate_name, regen_question_llm
 from .parser import extract_text
 
 app = FastAPI(title="ResumeLens", docs_url=None, redoc_url=None)
@@ -36,6 +25,27 @@ app = FastAPI(title="ResumeLens", docs_url=None, redoc_url=None)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 RESUME_STORE_DIR = Path(__file__).resolve().parent.parent / "resume_store"
 RESUME_STORE_DIR.mkdir(exist_ok=True)
+
+# 文本质量提示：解析层检测到较多乱码/不可识别字符时前置告知（多来自编码转换或 OCR）
+LOW_QUALITY_NOTICE = (
+    "文本中检测到较多乱码/不可识别字符（多来自编码转换或 OCR），"
+    "可能影响内容识别与评分，建议核对原件或改用 DOCX/TXT 重新上传。"
+)
+
+
+def _require_llm() -> None:
+    """所有评估/生成接口的前置校验：未配置 AI 时给出可操作指引（不再回退本地分析）。"""
+    if not config.llm_enabled():
+        raise HTTPException(
+            422,
+            "尚未配置 AI：请点击右上角齿轮，填写 Base URL、API Key 与模型后使用"
+            "（支持 DeepSeek / OpenAI / Kimi / 本地 Ollama 等 OpenAI 兼容接口）",
+        )
+
+
+def _prepend_notice(result: dict, text: str) -> None:
+    """在结果 notice 前追加提示（OCR / 乱码质量等）。"""
+    result["notice"] = f"{text} {result['notice']}".strip() if result.get("notice") else text
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -139,7 +149,7 @@ async def health() -> dict:
     cfg = config.get()
     return {
         "ok": True,
-        "engine": "llm" if config.llm_enabled() else "heuristic",
+        "engine": "llm" if config.llm_enabled() else "none",
         "model": cfg["model"] if config.llm_enabled() else None,
         "source": config.source(),
         "base_url": cfg["base_url"],
@@ -152,7 +162,7 @@ async def get_config() -> dict:
     """设置弹窗预填：脱敏后的当前配置。"""
     cfg = config.get()
     return {
-        "engine": "llm" if config.llm_enabled() else "heuristic",
+        "engine": "llm" if config.llm_enabled() else "none",
         "source": config.source(),
         "base_url": cfg["base_url"],
         "model": cfg["model"],
@@ -300,7 +310,7 @@ async def save_config(body: LLMConfigBody) -> dict:
     config.save(api_key, base_url, model)
     return {
         "ok": True,
-        "engine": "llm" if config.llm_enabled() else "heuristic",
+        "engine": "llm" if config.llm_enabled() else "none",
         "source": config.source(),
         "api_key_masked": config.masked_key(),
     }
@@ -335,20 +345,20 @@ async def evaluate(
     else:
         raise HTTPException(422, "请上传简历文件或直接粘贴简历文本")
 
-    if config.llm_enabled():
-        # 事务式：启用 AI 就全部用 AI，失败立即报错、绝不静默降级（避免两种引擎结果混排）
-        try:
-            result = await evaluate_with_llm(jd, resume)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"AI 评估失败：{exc}。可重试，或在设置中清除配置改用本地分析")
-    else:
-        result = evaluate_heuristic(jd, resume)
+    _require_llm()
+    try:
+        result = await evaluate_with_llm(jd, resume)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI 评估失败：{exc}。可重试，或检查设置中的 AI 配置")
     _normalize_result(result)
 
-    # OCR 提示：扫描件识别可能有偏差，提前告知用户
+    # 文本质量提示：扫描件 OCR / 乱码较多时提前告知，评分置信度可能偏低
     if file is not None and file.filename and file_meta.get("ocr_used"):
-        prefix = "简历为图片型/扫描 PDF，已使用本地 OCR 识别文本，可能存在识别偏差，建议核对结果。"
-        result["notice"] = f"{prefix} {result['notice']}".strip() if result.get("notice") else prefix
+        _prepend_notice(
+            result, "简历为图片型/扫描 PDF，已使用本地 OCR 识别文本，可能存在识别偏差，建议核对结果。"
+        )
+    if file is not None and file.filename and file_meta.get("low_quality"):
+        _prepend_notice(result, LOW_QUALITY_NOTICE)
 
     # 统一兜底字段，避免前端取值出错
     # 简历文本随结果返回（截断），供前端复用于岗位推荐，避免重复上传
@@ -389,14 +399,13 @@ async def job_recommend(body: JobRecommendBody) -> JSONResponse:
     if len(resume) < 50:
         raise HTTPException(422, "简历内容过短，无法生成岗位推荐")
 
-    if config.llm_enabled():
-        try:
-            data = await recommend_jobs_llm(resume)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"AI 生成岗位推荐失败：{exc}。可重试")
-        data.setdefault("notice", "")
-        return JSONResponse(data)
-    return JSONResponse(recommend_jobs_heuristic(resume))
+    _require_llm()
+    try:
+        data = await recommend_jobs_llm(resume)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI 生成岗位推荐失败：{exc}。可重试")
+    data.setdefault("notice", "")
+    return JSONResponse(data)
 
 
 # ---------------------------------------------------------------------------
@@ -421,9 +430,9 @@ async def batch_evaluate(
 
     _cleanup_expired_resume_files()  # 顺带清理超期孤儿附件
 
-    llm_on = config.llm_enabled()
-    # LLM 并发由 LLM_CONCURRENCY 控制（默认 4，撞限流可调回 2）；本地引擎为纯 CPU 计算，放宽到 8
-    sem = asyncio.Semaphore(config.llm_concurrency() if llm_on else 8)
+    _require_llm()
+    # LLM 并发由 LLM_CONCURRENCY 控制（默认 4，撞限流可调回 2）
+    sem = asyncio.Semaphore(config.llm_concurrency())
 
     async def evaluate_one(up: UploadFile) -> dict:
         filename = up.filename or "未命名"
@@ -433,18 +442,22 @@ async def batch_evaluate(
         if len(data) > config.MAX_FILE_SIZE:
             return {"filename": filename, "ok": False, "error": "超过 10 MB 限制"}
         try:
-            resume, _meta = await asyncio.to_thread(extract_text, filename, data)
+            resume, meta = await asyncio.to_thread(extract_text, filename, data)
         except HTTPException as exc:
             return {"filename": filename, "ok": False, "error": str(exc.detail)}
 
         async with sem:
-            if llm_on:
-                # 事务式：任一份 AI 评估失败立即抛出 → TaskGroup 取消其余任务并终止整批；
-                # lean=True 走精简提示词（榜单与只读摘要只需核心字段，单份提速约一半）
-                result = await evaluate_with_llm(jd, resume, lean=True)
-            else:
-                result = evaluate_heuristic(jd, resume)
+            # 事务式：任一份 AI 评估失败立即抛出 → TaskGroup 取消其余任务并终止整批；
+            # lean=True 走精简提示词（榜单与只读摘要只需核心字段，单份提速约一半）
+            result = await evaluate_with_llm(jd, resume, lean=True)
         _normalize_result(result)
+
+        if meta.get("ocr_used"):
+            _prepend_notice(
+                result, "简历为图片型/扫描 PDF，已使用本地 OCR 识别文本，可能存在识别偏差，建议核对结果。"
+            )
+        if meta.get("low_quality"):
+            _prepend_notice(result, LOW_QUALITY_NOTICE)
 
         result["candidate"] = guess_candidate_name(resume, filename)
         return {
@@ -459,8 +472,7 @@ async def batch_evaluate(
     async def evaluate_one_and_collect(up: UploadFile) -> None:
         results.append(await evaluate_one(up))
 
-    # 事务语义：AI 模式下任何一份失败 → 取消其余请求（不浪费 token）→ 整批报错，
-    # 保证榜单要么全为 AI 评估、要么全为本地分析，绝不混合。
+    # 事务语义：任何一份 AI 评估失败 → 取消其余请求（不浪费 token）→ 整批报错，绝不产生半批结果。
     results: list[dict] = []
     try:
         async with asyncio.TaskGroup() as tg:
@@ -470,9 +482,9 @@ async def batch_evaluate(
         first = eg.exceptions[0]
         raise HTTPException(
             502,
-            f"AI 评估失败（{first}），已终止本次批量评估，未产生任何混合结果；可重试，或清除配置改用本地分析",
+            f"AI 评估失败（{first}），已终止本次批量评估，未产生任何结果；可重试，或检查设置中的 AI 配置",
         )
-    return JSONResponse({"engine": "llm" if llm_on else "heuristic", "results": results})
+    return JSONResponse({"engine": "llm", "results": results})
 
 
 @app.post("/api/interview-questions")
@@ -484,15 +496,13 @@ async def interview_questions(body: QuestionsBody) -> JSONResponse:
     if len(resume) < 50:
         raise HTTPException(422, "简历内容过短，无法生成针对性问题")
 
-    if config.llm_enabled():
-        # 事务式：启用 AI 就用 AI，失败直接报错，不降级到本地模板（避免风格混杂误导）
-        try:
-            data = await generate_questions_llm(jd, resume)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"AI 生成面试题失败：{exc}。可重试，或清除配置改用本地分析")
-        data.setdefault("notice", "")
-        return JSONResponse(data)
-    return JSONResponse(questions_heuristic(jd, resume))
+    _require_llm()
+    try:
+        data = await generate_questions_llm(jd, resume)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI 生成面试题失败：{exc}。可重试")
+    data.setdefault("notice", "")
+    return JSONResponse(data)
 
 
 @app.post("/api/interview-question-regenerate")
@@ -509,15 +519,13 @@ async def interview_question_regenerate(body: QuestionRegenBody) -> JSONResponse
     if not current:
         raise HTTPException(422, "缺少要替换的题目")
 
-    if config.llm_enabled():
-        # 事务式：失败直接报错，不用本地模板替换（避免同一题单风格混杂）
-        try:
-            q = await regen_question_llm(jd, resume, category, current, others)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(502, f"AI 重新生成失败：{exc}。可重试")
-        return JSONResponse({"ok": True, "question": q})
-    q = regen_question_heuristic(jd, resume, category, current, others)
-    return JSONResponse({"ok": True, "question": q, "notice": "当前为本地模板题，配置 AI 评估后可获得针对该岗位的深度定制问题。"})
+    _require_llm()
+    # 事务式：失败直接报错（避免同一题单风格混杂）
+    try:
+        q = await regen_question_llm(jd, resume, category, current, others)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"AI 重新生成失败：{exc}。可重试")
+    return JSONResponse({"ok": True, "question": q})
 
 
 # ---------------------------------------------------------------------------

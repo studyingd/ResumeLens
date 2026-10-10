@@ -124,7 +124,7 @@
     file: null,
     busy: false,
     view: "candidate",
-    engine: "", // 当前评估引擎（llm / heuristic），用于增量评估的口径判断
+    engine: "", // 当前评估引擎（已配置为 "llm"，未配置为空串），用于增量评估的口径判断
     batchFiles: [],
     rankData: [],
     rankJd: "",
@@ -204,7 +204,7 @@
     try {
       const res = await fetch("/api/health");
       const data = await res.json();
-      state.engine = data.engine === "llm" ? "llm" : "heuristic";
+      state.engine = data.engine === "llm" ? "llm" : "";
       els.engineBadge.classList.remove("is-llm", "is-heuristic");
       if (data.engine === "llm") {
         els.engineBadge.classList.add("is-llm");
@@ -212,8 +212,8 @@
         els.engineText.textContent = `AI 评估 · ${data.model}`;
       } else {
         els.engineBadge.classList.add("is-heuristic");
-        els.engineBadge.title = "本地启发式分析 · 点击右上角齿轮配置 AI 评估";
-        els.engineText.textContent = "本地分析 · 点击配置 AI";
+        els.engineBadge.title = "尚未配置 AI：点击右上角齿轮完成配置后即可使用";
+        els.engineText.textContent = "未配置 AI · 点击设置";
       }
     } catch {
       state.engine = "";
@@ -685,9 +685,7 @@
     }
     const engines = new Set(state.rankData.map((d) => d.result.engine));
     if (engines.size > 1) {
-      notices.push(
-        "注意：当前排名混合了「AI 评估」与「本地分析」两种引擎的结果，两者评分口径不同，先后顺序仅供参考；建议对标记为本地分析的候选人重新评估后再比较。"
-      );
+      notices.push("注意：当前排名混合了不同批次的结果，评分存在采样波动，先后顺序仅供参考；如需严格比较建议清空后用同一批重新评估。");
     }
     if (notices.length) {
       els.rankNotice.textContent = notices.join(" ");
@@ -725,7 +723,7 @@
           <div class="rank-main">
             <div class="rank-title-row">
               <h4 class="rank-name">${esc(r.candidate || item.filename)}</h4>
-              <span class="engine-tag">${r.engine === "llm" ? "AI 评估" : "本地分析"}</span>
+              <span class="engine-tag">AI 评估</span>
               <span class="rank-batch" title="第 ${item.batch} 轮入库 ${item.time}">第 ${item.batch} 轮 · ${item.time}</span>
             </div>
             <p class="rank-verdict">${esc(r.verdict || "")}</p>
@@ -967,7 +965,7 @@
     );
     animateCounter(els.scoreNumber, score);
     els.verdictText.textContent = data.verdict || "—";
-    els.scoreEngineTag.textContent = data.engine === "llm" ? "AI 评估" : "本地分析";
+    els.scoreEngineTag.textContent = "AI 评估";
 
     // 统计行与分组计数
     const strengths = data.strengths ?? [];
@@ -1215,7 +1213,7 @@
     els.jobNotice.textContent = jobs?.notice ?? "";
     const positions = jobs?.positions ?? [];
     els.jobMeta.textContent = positions.length
-      ? `${positions.length} 个方向 · ${jobs.engine === "llm" ? "AI 推荐" : "本地推荐"}`
+      ? `${positions.length} 个方向 · AI 推荐`
       : "";
     els.jobRetry.hidden = true;
     els.jobList.innerHTML = positions.length
@@ -1343,7 +1341,7 @@
     els.detailScorebar.dataset.tone = toneOf(r.overall_score);
     els.detailScore.textContent = `${r.overall_score} 分`;
     els.detailVerdict.textContent = r.verdict || "";
-    els.detailEngine.textContent = r.engine === "llm" ? "AI 评估" : "本地分析";
+    els.detailEngine.textContent = "AI 评估";
     els.detailNotice.hidden = !r.notice;
     els.detailNotice.textContent = r.notice || "";
 
@@ -1801,8 +1799,8 @@
         showCfgStatus(`已启用 AI 深度评估 · ${data.api_key_masked} · 模型「${model || "默认"}」`, true);
         toast("AI 深度评估已启用", "success", 2600);
       } else {
-        showCfgStatus("已清除本机配置，回到本地启发式分析", true);
-        toast("已恢复本地分析引擎", "info", 2600);
+        showCfgStatus("已清除本机配置，重新配置 AI 后才能继续使用评估功能", true);
+        toast("已清除 AI 配置", "info", 2600);
       }
       els.cfgKey.value = "";
       els.cfgKey.placeholder = data.api_key_masked
@@ -1836,7 +1834,7 @@
     try {
       const { data } = await postJSON("/api/config", { api_key: "", base_url: "", model: "" });
       await refreshEngine();
-      showCfgStatus("已清除本机配置" + (data.engine === "llm" ? "（环境变量中仍配置有 Key，已回退启用）" : "，回到本地启发式分析"), true);
+      showCfgStatus("已清除本机配置" + (data.engine === "llm" ? "（环境变量中仍配置有 Key，已回退启用）" : "，请重新配置 AI 后继续使用"), true);
       els.cfgKey.value = "";
       els.cfgKey.placeholder = "sk-…（必填）";
     } catch {
