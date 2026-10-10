@@ -108,9 +108,8 @@ _QUESTIONS_PROMPT_TMPL = """\
 
 去重硬性要求：任意两道题的考察点不得重叠——同一条 JD 职责、同一个技术点、同一个业务场景只能出一题；从不同角度考察同一技能也属于重复，禁止；出题前先核对各题考察点，有重叠即舍弃并换一个未覆盖的考点补足数量。
 
-篇幅硬约束（输出预算有限，超长会被截断导致失败）：每题 question ≤ 60 字、intent ≤ 40 字、reference ≤ 90 字，reference 直接列要点、顿号分隔，不要写成段落。
-
-每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分）。
+{length_block}
+每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分，需具体到可对照评分的程度）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
 {
   "questions": [
@@ -143,6 +142,16 @@ def _dedupe_questions(questions: list[dict], threshold: float = 0.6) -> tuple[li
         kept.append(q)
         seen_sigs.append(sig)
     return kept, dropped
+
+
+def _length_block(total: int) -> str:
+    """篇幅约束仅在大题量（输出预算承压）时启用；常规题量不限制，保留完整深度。"""
+    if total <= 12:
+        return ""
+    return (
+        "篇幅约束（总题量较大，输出预算有限，超长会被截断导致失败）："
+        "每题 question ≤ 80 字、intent ≤ 50 字、reference ≤ 150 字，reference 精炼为要点（顿号分隔），不要展开成长段落。\n\n"
+    )
 
 
 def _salvage_questions(raw: str) -> dict:
@@ -193,7 +202,9 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
     counts = normalize_question_counts(counts)
-    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts))
+    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts)).replace(
+        "{length_block}", _length_block(sum(counts.values()))
+    )
     raw = await chat_text(
         system,
         f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}",
