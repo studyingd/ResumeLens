@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -105,6 +106,8 @@ _QUESTIONS_PROMPT_TMPL = """\
 
 {counts_block}
 
+篇幅硬约束（输出预算有限，超长会被截断导致失败）：每题 question ≤ 60 字、intent ≤ 40 字、reference ≤ 90 字，reference 直接列要点、顿号分隔，不要写成段落。
+
 每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
 {
@@ -117,13 +120,63 @@ _QUESTIONS_PROMPT_TMPL = """\
 JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；不要出现尾随逗号。"""
 
 
+def _salvage_questions(raw: str) -> dict:
+    """输出被 max_tokens 截断时的补救：扫描 questions 数组中已完整的问题对象重建结果。
+
+    只保留能独立通过 json.loads 的完整对象；一个都拼不出来则放弃。
+    """
+    s = raw.strip()
+    if not s.startswith("{"):
+        raise ValueError("模型输出中未找到 JSON")
+    m = re.search(r'"questions"\s*:\s*\[', s)
+    if not m:
+        raise ValueError("模型输出中未找到 JSON")
+    objs = []
+    depth = 0
+    obj_start = None
+    in_str = False
+    esc = False
+    for i in range(m.end(), len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and obj_start is not None:
+                objs.append(json.loads(s[obj_start : i + 1]))
+                obj_start = None
+        elif ch == "]" and depth == 0:
+            break  # 数组正常结束
+    if not objs:
+        raise ValueError("模型输出中未找到 JSON")
+    return {"questions": objs, "focus_areas": []}
+
+
 async def generate_questions_llm(jd: str, resume: str, counts: dict | None = None) -> dict:
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
     counts = normalize_question_counts(counts)
     system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts))
     raw = await chat_text(system, f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}", temperature=0.4)
-    data = _extract_json(raw)
+    salvaged = False
+    try:
+        data = _extract_json(raw)
+    except ValueError:
+        # 大题量时模型思考占用输出预算，输出可能在数组中间被截断：捡回已完整的问题对象
+        data = _salvage_questions(raw)
+        salvaged = True
 
     questions = []
     for q in data.get("questions", []):
@@ -151,11 +204,16 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
         kept.append(q)
     questions = kept[:30]  # 兜底上限（未知类别不受逐类约束）
 
+    notices = []
+    if resume_cut or jd_cut:
+        notices.append("简历或 JD 内容过长，已截取前部分生成面试题。")
+    if salvaged:
+        notices.append("模型输出达到长度上限被截断，已保留前面完整的问题；如需更多可适当减少题量后重试。")
     return {
         "engine": "llm",
         "questions": questions,
         "focus_areas": [str(a) for a in data.get("focus_areas", [])][:4],
-        "notice": "简历或 JD 内容过长，已截取前部分生成面试题。" if (resume_cut or jd_cut) else "",
+        "notice": " ".join(notices),
     }
 
 

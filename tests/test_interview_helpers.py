@@ -7,6 +7,7 @@ import pytest
 from app.interview import (
     DEFAULT_QUESTION_COUNTS,
     _counts_block,
+    _salvage_questions,
     guess_candidate_name,
     normalize_question_counts,
 )
@@ -51,6 +52,36 @@ class TestQuestionCounts:
         assert "共 8 题" in block
         assert "岗位职责（3 题）" in block and "技能验证（4 题）" in block
         assert "情景设计（0 题）：不要生成该类问题。" in block
+
+
+class TestSalvageQuestions:
+    def test_truncated_mid_object_keeps_complete_ones(self):
+        raw = (
+            '{\n  "questions": [\n'
+            '    {"category": "岗位职责", "question": "q1", "intent": "i", "reference": "r"},\n'
+            '    {"category": "技能验证", "question": "q2", "intent": "i", "reference": "r"},\n'
+            '    {"category": "软素质", "question": "q3", "int'  # 在第三个对象中间被截断
+        )
+        data = _salvage_questions(raw)
+        assert [q["question"] for q in data["questions"]] == ["q1", "q2"]
+        assert data["focus_areas"] == []
+
+    def test_quotes_and_escapes_inside_values(self):
+        raw = (
+            '{"questions": [{'
+            '"question": "问「双引号 \\" 转义 {与} 括号", "intent": "i", "reference": "r"}'
+            ', {"question": "截'
+        )
+        data = _salvage_questions(raw)
+        assert data["questions"][0]["question"].endswith("括号")
+
+    def test_no_questions_key_raises(self):
+        with pytest.raises(ValueError):
+            _salvage_questions('{"other": [1, 2]')
+
+    def test_no_complete_object_raises(self):
+        with pytest.raises(ValueError):
+            _salvage_questions('{"questions": [{"question": "q1')
 
 
 class TestExplicitLabel:
