@@ -1725,3 +1725,28 @@ textarea:focus {
   .container { padding: 0 20px; }
   .engine-badge { display: none; }
 }
+
+/* ---------- 榜单分段徽标与同级标注（分差 <=3 属采样波动） ---------- */
+.rank-band {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.rank-band.band-strong { background: var(--good-600); color: #fff; }
+.rank-band.band-good { background: var(--good-100); color: var(--good-600); }
+.rank-band.band-ok { background: oklch(0.96 0.03 255); color: oklch(0.52 0.11 258); }
+.rank-band.band-warn { background: var(--warn-100); color: var(--warn-600); }
+.rank-tie {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  text-align: center;
+  white-space: nowrap;
+}

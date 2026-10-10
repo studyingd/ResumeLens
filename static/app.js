@@ -709,11 +709,26 @@
     return `${hh}:${mm}`;
   }
 
+  // 分段展示：LLM 评分存在采样波动，绝对分差意义有限，分段才是决策依据
+  const bandOf = (s) =>
+    s >= 85
+      ? { label: "强烈推荐", cls: "band-strong" }
+      : s >= 70
+        ? { label: "推荐", cls: "band-good" }
+        : s >= 55
+          ? { label: "备选", cls: "band-ok" }
+          : { label: "不推荐", cls: "band-warn" };
+
   function renderRankList() {
-    els.rankMeta.textContent = `共 ${state.rankData.length} 位 · 累计 ${state.rankBatches} 轮`;
+    els.rankMeta.textContent = `共 ${state.rankData.length} 位 · 累计 ${state.rankBatches} 轮 · 排名 = 简历与 JD 的匹配度，非候选人真实能力`;
+    // 相邻两人分差 ≤3：属采样波动范围，标注同级避免过度解读名次先后
+    const ties = state.rankData.map(
+      (d, i, a) => i > 0 && a[i - 1].result.overall_score - d.result.overall_score <= 3
+    );
     els.rankList.innerHTML = state.rankData
       .map((item, i) => {
         const r = item.result;
+        const band = bandOf(r.overall_score);
         const matched = r.matched_keywords ?? [];
         const missing = r.missing_keywords ?? [];
         return `
@@ -724,6 +739,7 @@
             <div class="rank-title-row">
               <h4 class="rank-name">${esc(r.candidate || item.filename)}</h4>
               <span class="engine-tag">AI 评估</span>
+              <span class="rank-band ${band.cls}" title="分段：≥85 强烈推荐 / 70-84 推荐 / 55-69 备选 / <55 不推荐">${band.label}</span>
               <span class="rank-batch" title="第 ${item.batch} 轮入库 ${item.time}">第 ${item.batch} 轮 · ${item.time}</span>
             </div>
             <p class="rank-verdict">${esc(r.verdict || "")}</p>
@@ -733,6 +749,7 @@
           </div>
           <div class="rank-score">
             <span class="rank-score-num">${r.overall_score}</span><span class="rank-score-unit">分</span>
+            ${ties[i] ? '<span class="rank-tie" title="分差 ≤3 分，属采样波动范围内的同级候选人，建议结合维度分与面试表现判断">≈ 同级</span>' : ""}
           </div>
           <button type="button" class="icon-btn rank-remove" data-remove="${i}" aria-label="从排名中移除 ${esc(
             r.candidate || item.filename

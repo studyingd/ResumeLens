@@ -330,6 +330,8 @@ async def evaluate(
             "岗位 JD 内容过短：请粘贴 30 字以上的完整职位描述，或清空 JD 仅对简历做通用体检",
         )
 
+    _require_llm()  # 先检查配置再做解析/OCR：未配置时不白跑重活（与批量端点顺序一致）
+
     # 简历来源：上传文件优先，其次直接粘贴的文本
     if file is not None and file.filename:
         data = await file.read()
@@ -345,7 +347,6 @@ async def evaluate(
     else:
         raise HTTPException(422, "请上传简历文件或直接粘贴简历文本")
 
-    _require_llm()
     try:
         result = await evaluate_with_llm(jd, resume)
     except Exception as exc:  # noqa: BLE001

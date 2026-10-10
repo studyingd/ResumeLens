@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -26,6 +27,16 @@ from . import config
 # ---------------------------------------------------------------------------
 # 公共工具
 # ---------------------------------------------------------------------------
+
+# 发送给 LLM 的文本上限（字符）：防止超大文件（上传限制 10MB 的 TXT）把 prompt 撑爆
+MAX_RESUME_CHARS = 24000
+MAX_JD_CHARS = 8000
+
+
+def cap_text(text: str, limit: int) -> tuple[str, bool]:
+    """超长文本截断到 limit 字符，返回 (截断文本, 是否截断)。"""
+    return (text, False) if len(text) <= limit else (text[:limit], True)
+
 
 def _clamp(value: int, low: int = 0, high: int = 100) -> int:
     return max(low, min(high, value))
@@ -301,6 +312,31 @@ def _is_anthropic(base_url: str) -> bool:
     return "/anthropic" in base_url
 
 
+# 瞬时错误：限流 / 服务端抖动，退避重试有意义；其余错误（鉴权/参数/路径）立即失败
+_TRANSIENT_STATUS = {429, 500, 502, 503, 504}
+
+
+async def _post_llm(client: httpx.AsyncClient, url: str, payload: dict, headers: dict) -> httpx.Response:
+    """LLM 请求 + 瞬时错误自动重试（超时/网络错误/429/5xx 退避重试 2 次，其余立即抛出）。"""
+    delay = 2.0
+    for attempt in range(3):
+        try:
+            resp = await client.post(url, json=payload, headers=headers)
+        except httpx.TimeoutException as exc:
+            err = f"请求超时（{exc.__class__.__name__}）"
+        except httpx.TransportError as exc:
+            err = f"网络错误（{exc.__class__.__name__}）"
+        else:
+            if resp.status_code not in _TRANSIENT_STATUS:
+                return resp
+            err = format_llm_http_error(resp.status_code, resp.text)
+        if attempt == 2:
+            raise RuntimeError(f"{err}；已自动重试 {attempt} 次仍失败，可稍后再试")
+        await asyncio.sleep(delay)
+        delay *= 2.5
+    raise AssertionError("unreachable")
+
+
 async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
     """统一 LLM 调用入口：按 Base URL 自动适配 OpenAI 兼容 / Anthropic 兼容协议，返回文本。
 
@@ -326,6 +362,7 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
     else:
         payload = {
             "model": cfg["model"],
+            "max_tokens": 8192,  # 显式给足：服务端默认（常 4096）可能截断 JSON 导致解析失败
             "temperature": temperature,
             "messages": [
                 {"role": "system", "content": system},
@@ -336,7 +373,7 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
         url = f"{cfg['base_url']}/chat/completions"
 
     async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        resp = await client.post(url, json=payload, headers=headers)
+        resp = await _post_llm(client, url, payload, headers)
     if resp.status_code != 200:
         raise RuntimeError(format_llm_http_error(resp.status_code, resp.text))
     if "html" in resp.headers.get("content-type", "").lower():
@@ -360,18 +397,22 @@ async def evaluate_with_llm(jd: str, resume: str, lean: bool = False) -> dict:
 
     lean=True 为批量评估专用精简模式：输出 token 减半→时延近似减半，
     仅包含榜单与只读摘要所需字段（无建议/原文对照/简介改写），
-    评分口径与完整模式一致（技能适配度为主、格式不拖累总分）。
+    评分口径与完整模式一致（技能适配度为主、格式不拖累总分）；
+    且温度固定 0：批量场景要的是同一口径下稳定可比的评分，而非单份分析的多样性。
     """
-    if jd.strip():
+    jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
+    resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
+    if jd_text:
         system = _BATCH_SYSTEM_PROMPT if lean else _SYSTEM_PROMPT
-        user, mode = f"【岗位JD】\n{jd}\n\n【简历】\n{resume}", "match"
+        user, mode = f"【岗位JD】\n{jd_text}\n\n【简历】\n{resume_text}", "match"
     else:
-        system, user, mode = _REVIEW_SYSTEM_PROMPT, f"【简历】\n{resume}", "review"
+        system, user, mode = _REVIEW_SYSTEM_PROMPT, f"【简历】\n{resume_text}", "review"
     # 结构化输出偶发畸形（引号/逗号失误导致 JSON 解析失败），自动重试一次并微调温度换一个采样
     result = None
     last_err: ValueError | None = None
+    base_temp = 0.0 if lean else 0.3
     for attempt in range(2):
-        raw = await chat_text(system, user, temperature=0.3 if attempt == 0 else 0.5)
+        raw = await chat_text(system, user, temperature=base_temp if attempt == 0 else 0.5)
         try:
             result = _extract_json(raw)
             break
@@ -382,6 +423,13 @@ async def evaluate_with_llm(jd: str, resume: str, lean: bool = False) -> dict:
     result["engine"] = "llm"
     result["mode"] = mode
     result["overall_score"] = _clamp(int(round(float(result.get("overall_score", 60)))))
+    if jd_cut or resume_cut:
+        cuts = []
+        if resume_cut:
+            cuts.append(f"简历超过 {MAX_RESUME_CHARS} 字符，已截取前 {MAX_RESUME_CHARS} 字符评估")
+        if jd_cut:
+            cuts.append(f"岗位 JD 超过 {MAX_JD_CHARS} 字符，已截取前 {MAX_JD_CHARS} 字符")
+        result["notice"] = f"{'；'.join(cuts)}。{result.get('notice', '')}".strip()
     return result
 
 
@@ -422,12 +470,13 @@ JSON 格式硬性要求（违反会导致解析失败）：
 
 async def recommend_jobs_llm(resume: str) -> dict:
     """LLM 岗位方向推荐（与评估同源的解析与重试机制）。"""
+    resume_text, _ = cap_text(resume, MAX_RESUME_CHARS)
     result = None
     last_err: ValueError | None = None
     for attempt in range(2):
         raw = await chat_text(
             _JOB_RECOMMEND_PROMPT,
-            f"【简历】\n{resume}",
+            f"【简历】\n{resume_text}",
             temperature=0.4 if attempt == 0 else 0.6,
         )
         try:

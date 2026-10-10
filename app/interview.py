@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .evaluator import _extract_json, chat_text
+from .evaluator import MAX_JD_CHARS, MAX_RESUME_CHARS, _extract_json, cap_text, chat_text
 
 # ---------------------------------------------------------------------------
 # 候选人姓名识别
@@ -76,7 +76,9 @@ JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不
 
 
 async def generate_questions_llm(jd: str, resume: str) -> dict:
-    raw = await chat_text(_QUESTIONS_PROMPT, f"【岗位JD】\n{jd}\n\n【候选人简历】\n{resume}", temperature=0.4)
+    jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
+    resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
+    raw = await chat_text(_QUESTIONS_PROMPT, f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}", temperature=0.4)
     data = _extract_json(raw)
 
     questions = []
@@ -97,6 +99,7 @@ async def generate_questions_llm(jd: str, resume: str) -> dict:
         "engine": "llm",
         "questions": questions[:10],
         "focus_areas": [str(a) for a in data.get("focus_areas", [])][:4],
+        "notice": "简历或 JD 内容过长，已截取前部分生成面试题。" if (resume_cut or jd_cut) else "",
     }
 
 
@@ -111,6 +114,8 @@ async def regen_question_llm(
     """重新生成一道题：保持原题类别、锚定 JD、与保留题目不重复。"""
     cat = category or "综合"
     others_text = "\n".join(f"- {o}" for o in others[:20] if o.strip()) or "- （无）"
+    jd_text, _ = cap_text(jd.strip(), MAX_JD_CHARS)
+    resume_text, _ = cap_text(resume, MAX_RESUME_CHARS)
     system = (
         "你是一位有 15 年经验的技术面试官。一场面试的题单已经确定，面试官对其中一道题不满意，需要你重新出一道来替换它。\n\n"
         "要求（必须遵守）：\n"
@@ -123,7 +128,7 @@ async def regen_question_llm(
         "JSON 格式硬性要求：字符串值内部不要使用英文双引号，如需引用词语请用中文引号「」；不要出现尾随逗号。"
     )
     user = (
-        f"【岗位JD】\n{jd}\n\n【候选人简历】\n{resume}\n\n"
+        f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}\n\n"
         f"【需要替换的原题】（类别：{cat}）\n{current}\n\n【其余保留的题目】\n{others_text}"
     )
     raw = await chat_text(system, user, temperature=0.7)
