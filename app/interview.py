@@ -57,21 +57,20 @@ _QUESTIONS_PROMPT = """\
 - 以岗位JD为出题主线：每道题都必须锚定 JD 中的一条职责或任职要求，题干围绕岗位要求本身展开。
 - 简历仅作交叉参照，只在与 JD 相关时使用：
   a) JD 要求且简历中体现了的技能/经历 → 结合简历中的具体描述出题，用于验证真实性与深度；
-  b) JD 要求但简历未体现的能力 → 出题探测其基础与学习潜力；
+  b) JD 要求但简历未体现的能力 → 直接出该技能的技术题考察掌握程度，不要问「你目前基础如何」「举一个快速掌握新技能的例子」这类元问题；
   c) 简历中与 JD 无关的内容（无关项目、无关技能）一律不要出题。
 
 题量结构（约 10 题）：
-1. 岗位职责（4-5 题）：针对 JD 中每条核心职责出一题，考察候选人胜任该职责的能力。
-2. 技能验证（2-3 题）：JD 任职要求中的核心技术项；若简历有相关描述则结合其描述追问细节，没有则直接考察掌握程度。
-3. 短板探测（1-2 题）：JD 明确要求但简历未体现的能力。
-4. 情景设计（1-2 题）：基于 JD 职责模拟该岗位的真实工作场景。
-5. 软素质（1 题）：协作、沟通或成长性。
+1. 岗位职责（3-4 题）：针对 JD 中每条核心职责出一题，考察候选人胜任该职责的能力。
+2. 技能验证（3-4 题）：JD 任职要求中的核心技术项。简历有相关描述的结合其描述追问细节与深度；简历未体现的直接出技术题考察掌握程度（题面本身是技术问题，而非问学习经历）。
+3. 情景设计（1-2 题）：基于 JD 职责模拟该岗位的真实工作场景。
+4. 软素质（1 题）：协作、沟通或成长性。
 
 每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
 {
   "questions": [
-    {"category": "岗位职责|技能验证|短板探测|情景设计|软素质", "question": "问题原文", "intent": "考察意图（注明对应JD要求）", "reference": "参考答案要点"}
+    {"category": "岗位职责|技能验证|情景设计|软素质", "question": "问题原文", "intent": "考察意图（注明对应JD要求）", "reference": "参考答案要点"}
   ],
   "focus_areas": ["本场面试的重点提示，2-4 条"]
 }
@@ -170,58 +169,82 @@ def regen_question_heuristic(
 # ---------------------------------------------------------------------------
 
 
+def _kw_tokens(kw: str) -> frozenset[str]:
+    """按分隔符把关键词切成 token 集合（「python/fastapi」→ {python, fastapi}）。"""
+    return frozenset(t for t in re.split(r"[/,\s、|&+·]+", kw) if t)
+
+
+def _dedupe_keywords(keywords: list[str]) -> list[str]:
+    """去掉被其他关键词完全包含的冗余项（已有「python/fastapi」就不再保留「fastapi」），
+    避免生成两道几乎相同的技术题；按 token 而非子串判断，所以「java」不会被「javascript」误删。"""
+    toks = {kw: _kw_tokens(kw) for kw in keywords}
+    return [kw for kw in keywords if not any(toks[kw] < toks[o] for o in keywords if o != kw)]
+
+
+def _kw_label(kw: str) -> str:
+    """关键词在题干中的展示：复合词（python/fastapi）用顿号连接，读起来更自然。"""
+    parts = [t for t in re.split(r"[/、]+", kw) if t]
+    return "、".join(parts) if len(parts) > 1 else kw
+
+
 def questions_heuristic(jd: str, resume: str) -> dict:
     """JD 主线出题：每题锚定 JD 关键词；简历仅在与 JD 相关时交叉引用。"""
     resume_lower = resume.lower()
-    keywords = _extract_jd_keywords(jd)
+    # 出题前先去掉互为包含的冗余关键词，否则会出两道几乎相同的技术题；
+    # 评分用的关键词提取（evaluator）不经过这里，覆盖统计不受影响
+    keywords = _dedupe_keywords(_extract_jd_keywords(jd))
     matched = [kw for kw in keywords if _keyword_in_text(kw, resume_lower)]
     missing = [kw for kw in keywords if kw not in matched]
 
     questions: list[dict] = []
+    used: set[str] = set()  # 已被前面的题占用的关键词，避免不同类别重复考同一个点
 
     # 岗位职责：针对 JD 核心关键词（职责向）出题
     for kw in keywords[:3]:
+        used.add(kw)
         questions.append(
             {
                 "category": "岗位职责",
-                "question": f"这个岗位的核心工作涉及「{kw}」。请结合你过往的经历，谈谈在这类工作中你会如何规划、执行，以及用什么指标衡量做得好不好？",
-                "intent": f"对应 JD 要求「{kw}」，考察方法论与结果意识",
+                "question": f"这个岗位的核心工作涉及「{_kw_label(kw)}」。请结合你过往的经历，谈谈在这类工作中你会如何规划、执行，以及用什么指标衡量做得好不好？",
+                "intent": f"对应 JD 要求「{_kw_label(kw)}」，考察方法论与结果意识",
                 "reference": "关注是否有完整的规划→执行→度量闭环，能否给出可量化的好坏标准",
             }
         )
 
-    # 技能验证：JD 要求且简历命中的关键词，结合简历细节追问
+    # 技能验证（简历命中）：优先考职责题未覆盖的技能，结合简历细节追问
     bullets_with_kw = [
         re.sub(r"^\s*[-•·*]\s*", "", ln).strip()
         for ln in resume.splitlines()
         if re.match(r"^\s*[-•·*]", ln)
         and any(_keyword_in_text(kw, ln.lower()) for kw in matched)
     ]
-    for kw in matched[:2]:
+    for kw in ([k for k in matched if k not in used] or matched)[:2]:
+        used.add(kw)
         related = next((b for b in bullets_with_kw if _keyword_in_text(kw, b.lower())), "")
-        anchor = f"简历中提到「{related[:50]}」，与 JD 的「{kw}」要求直接相关。" if related else f"JD 要求熟悉「{kw}」，"
+        anchor = f"简历中提到「{related[:50]}」，与 JD 的「{_kw_label(kw)}」要求直接相关。" if related else f"JD 要求熟悉「{_kw_label(kw)}」，"
         questions.append(
             {
                 "category": "技能验证",
-                "question": f"{anchor}请介绍你在「{kw}」上最有代表性的一次实践：当时的背景、方案取舍和量化结果分别是什么？",
-                "intent": f"对应 JD 要求「{kw}」，结合简历描述验证经验真实性与深度",
+                "question": f"{anchor}请介绍你在「{_kw_label(kw)}」上最有代表性的一次实践：当时的背景、方案取舍和量化结果分别是什么？",
+                "intent": f"对应 JD 要求「{_kw_label(kw)}」，结合简历描述验证经验真实性与深度",
                 "reference": "合格回答应包含具体场景、方案对比与量化结果；若只能复述概念则经验存疑",
             }
         )
 
-    # 短板探测：JD 要求但简历未体现
-    for kw in missing[:2]:
+    # 技能验证（简历未体现）：JD 要求但简历未提及 → 直接出技术题考察掌握程度，不问学习经历
+    for kw in ([k for k in missing if k not in used] or missing)[:2]:
+        used.add(kw)
         questions.append(
             {
-                "category": "短板探测",
-                "question": f"岗位会较多用到「{kw}」，你目前在这方面的基础如何？请举一个你快速掌握新技能并落地的例子。",
-                "intent": f"对应 JD 要求「{kw}」，评估差距大小与学习潜力",
-                "reference": "关注学习路径的具体性、自驱力与迁移能力",
+                "category": "技能验证",
+                "question": f"JD 要求掌握「{_kw_label(kw)}」。请说明其核心机制或常用方案，再举一个你实际用过（或深入研究过）的场景：当时如何选型、踩过什么坑、如何验证效果？",
+                "intent": f"对应 JD 要求「{_kw_label(kw)}」，简历未体现 → 直接考察该技能的实际掌握程度",
+                "reference": f"能讲清「{_kw_label(kw)}」的核心机制与真实场景取舍为合格；只会背概念、答不出场景细节则掌握程度存疑",
             }
         )
 
     # 情景设计：基于 JD 首要职责构造场景
-    top_kw = keywords[0] if keywords else "核心业务"
+    top_kw = _kw_label(keywords[0]) if keywords else "核心业务"
     questions.append(
         {
             "category": "情景设计",
@@ -242,9 +265,9 @@ def questions_heuristic(jd: str, resume: str) -> dict:
 
     focus = ["出题主线为岗位 JD 的职责与任职要求，简历仅作交叉验证"]
     if missing:
-        focus.append(f"重点探测 JD 要求但简历缺失的能力：{'、'.join(missing[:4])}")
+        focus.append(f"重点考察 JD 要求但简历未体现的能力：{'、'.join(_kw_label(k) for k in missing[:4])}")
     if matched:
-        focus.append(f"验证简历与 JD 双双命中的核心经验：{'、'.join(matched[:4])}")
+        focus.append(f"验证简历与 JD 双双命中的核心经验：{'、'.join(_kw_label(k) for k in matched[:4])}")
 
     return {
         "engine": "heuristic",
