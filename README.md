@@ -94,6 +94,12 @@ uv run ruff check .   # lint
 uv run pytest -q      # 测试（离线，mock LLM）
 ```
 
+改动涉及共享组件（如 `chat_text`）或任一提示词后，推送前另跑真机回归（需已配置 AI，约 3-6 分钟）：
+
+```bash
+uv run python scripts/regression.py   # 排名稳定性 / 体检完整性 / 面试题质量
+```
+
 推送 / PR 到 main 会自动跑 GitHub Actions（lint + 测试，见 `.github/workflows/ci.yml`）。
 
 ## API

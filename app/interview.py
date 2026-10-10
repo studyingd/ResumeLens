@@ -106,8 +106,6 @@ _QUESTIONS_PROMPT_TMPL = """\
 
 {counts_block}
 
-去重硬性要求：任意两道题的考察点不得重叠——同一条 JD 职责、同一个技术点、同一个业务场景只能出一题；从不同角度考察同一技能也属于重复，禁止；出题前先核对各题考察点，有重叠即舍弃并换一个未覆盖的考点补足数量。
-
 {length_block}
 每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分，需具体到可对照评分的程度）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
@@ -119,29 +117,6 @@ _QUESTIONS_PROMPT_TMPL = """\
 }
 
 JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；不要出现尾随逗号。"""
-
-
-def _bigrams(text: str) -> set[str]:
-    """字符二元组集合（中文相似度常用做法，对标点/空白不敏感）。"""
-    t = re.sub(r"\s+", "", text)
-    return {t[i : i + 2] for i in range(max(0, len(t) - 1))}
-
-
-def _dedupe_questions(questions: list[dict], threshold: float = 0.6) -> tuple[list[dict], int]:
-    """去掉与前面题目高度相似的题（question+reference 二元组的包含度：交集/较短者），返回去重结果与去除数量。"""
-    kept: list[dict] = []
-    seen_sigs: list[set[str]] = []
-    dropped = 0
-    for q in questions:
-        sig = _bigrams(f"{q['question']}{q['reference']}")
-        if any(
-            min(len(sig), len(s)) >= 6 and len(sig & s) / min(len(sig), len(s)) >= threshold for s in seen_sigs
-        ):
-            dropped += 1
-            continue
-        kept.append(q)
-        seen_sigs.append(sig)
-    return kept, dropped
 
 
 def _length_block(total: int) -> str:
@@ -234,9 +209,6 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
     if not questions:
         raise ValueError("模型未返回有效问题")
 
-    # 先去重（考察点撞车），再逐类截断到请求上限
-    questions, dedup_dropped = _dedupe_questions(questions)
-
     # 逐类截断：提示词中数量为硬性要求，但模型仍可能超发——超出配置数量的类别尾部截去
     used = dict.fromkeys(counts, 0)
     kept = []
@@ -254,8 +226,6 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
         notices.append("简历或 JD 内容过长，已截取前部分生成面试题。")
     if salvaged:
         notices.append("模型输出达到长度上限被截断，已保留前面完整的问题；如需更多可适当减少题量后重试。")
-    if dedup_dropped:
-        notices.append(f"已自动过滤 {dedup_dropped} 道与其他题考察点重复的题目。")
     return {
         "engine": "llm",
         "questions": questions,
