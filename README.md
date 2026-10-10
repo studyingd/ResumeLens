@@ -81,7 +81,7 @@ LLM_MODEL=deepseek-chat
 │   ├── parser.py         # 简历文本提取（PDF / DOCX / TXT / MD，兼容 GBK；扫描件 OCR；乱码质量检测）
 │   ├── evaluator.py      # LLM 评估与岗位推荐（OpenAI / Anthropic 兼容调用）
 │   └── config.py         # 配置管理（页面设置 > .env > 默认值，支持热更新）
-├── static/               # 单页前端（原生 HTML/CSS/JS，无构建步骤）
+├── static/               # 单页前端（原生 HTML/CSS + ES Modules，无构建步骤，入口 js/app.js）
 ├── tests/                # pytest 测试（离线，不请求真实 LLM）
 ├── samples/              # 示例简历
 └── .env.example          # LLM 配置模板
