@@ -337,8 +337,8 @@ async def _post_llm(client: httpx.AsyncClient, url: str, payload: dict, headers:
     raise AssertionError("unreachable")
 
 
-async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
-    """统一 LLM 调用入口：按 Base URL 自动适配 OpenAI 兼容 / Anthropic 兼容协议，返回文本。
+async def _chat_text_once(system: str, user: str, *, temperature: float, max_tokens: int | None = None) -> str:
+    """单次 LLM 调用：按 Base URL 自动适配 OpenAI 兼容 / Anthropic 兼容协议，返回文本。
 
     - OpenAI 兼容：POST {base}/chat/completions，Bearer 鉴权，取 choices[0].message.content
     - Anthropic 兼容：POST {base}/v1/messages，x-api-key 鉴权，拼接 content 中 type=text 的块
@@ -351,7 +351,7 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
     if _is_anthropic(cfg["base_url"]):
         payload = {
             "model": cfg["model"],
-            "max_tokens": 16384,  # thinking 模型思考边占用输出预算，上限给足避免 JSON 被截断
+            "max_tokens": max_tokens or 16384,  # thinking 模型思考边占用输出预算，上限给足避免 JSON 被截断
             "temperature": temperature,
             "thinking": {"type": "disabled"},  # 结构化任务关闭深度思考：更快更省，避免思考耗尽预算
             "system": system,
@@ -362,7 +362,7 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
     else:
         payload = {
             "model": cfg["model"],
-            "max_tokens": 8192,  # 显式给足：服务端默认（常 4096）可能截断 JSON 导致解析失败
+            "max_tokens": max_tokens or 8192,  # 显式给足：服务端默认（常 4096）可能截断 JSON 导致解析失败
             "temperature": temperature,
             "messages": [
                 {"role": "system", "content": system},
@@ -390,6 +390,22 @@ async def chat_text(system: str, user: str, *, temperature: float = 0.3) -> str:
             b.get("text", "") for b in data.get("content", []) if isinstance(b, dict) and b.get("type") == "text"
         )
     return data["choices"][0]["message"]["content"]
+
+
+async def chat_text(system: str, user: str, *, temperature: float = 0.3, max_tokens: int | None = None) -> str:
+    """统一 LLM 调用入口：对「HTTP 200 但内容为空」的偶发情况自动重试（最多 3 次）。
+
+    网关/思考型模型偶发把预算耗在 reasoning 上而最终答案为空：这类响应状态码正常，
+    传输层重试覆盖不到，需在此单独重试；全部为空则原样返回，由上层按解析失败报错。
+    """
+    text = ""
+    for attempt in range(3):
+        text = await _chat_text_once(system, user, temperature=temperature, max_tokens=max_tokens)
+        if text.strip():
+            return text
+        if attempt < 2:
+            await asyncio.sleep(1.5 * (attempt + 1))
+    return text
 
 
 async def evaluate_with_llm(jd: str, resume: str, lean: bool = False) -> dict:

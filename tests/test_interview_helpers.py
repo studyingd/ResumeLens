@@ -6,7 +6,9 @@ import pytest
 
 from app.interview import (
     DEFAULT_QUESTION_COUNTS,
+    _bigrams,
     _counts_block,
+    _dedupe_questions,
     _salvage_questions,
     guess_candidate_name,
     normalize_question_counts,
@@ -82,6 +84,37 @@ class TestSalvageQuestions:
     def test_no_complete_object_raises(self):
         with pytest.raises(ValueError):
             _salvage_questions('{"questions": [{"question": "q1')
+
+
+class TestDedupeQuestions:
+    def _q(self, question, reference="r"):
+        return {"category": "技能验证", "question": question, "intent": "", "reference": reference}
+
+    def test_identical_dropped(self):
+        qs = [self._q("请说明 Spring Boot 自动装配的原理"), self._q("请说明 Spring Boot 自动装配的原理！")]
+        kept, dropped = _dedupe_questions(qs)
+        assert len(kept) == 1 and dropped == 1
+
+    def test_similar_reference_also_dropped(self):
+        qs = [
+            self._q("订单高并发下如何保障稳定性", "限流、熔断、降级"),
+            self._q("大促场景下订单服务如何保障稳定性", "限流、熔断、降级落地"),
+        ]
+        kept, dropped = _dedupe_questions(qs)
+        assert len(kept) == 1 and dropped == 1
+
+    def test_distinct_kept(self):
+        qs = [
+            self._q("请说明 Spring Boot 自动装配的原理"),
+            self._q("MySQL 索引失效的常见场景有哪些"),
+            self._q("如何设计订单状态机"),
+        ]
+        kept, dropped = _dedupe_questions(qs)
+        assert len(kept) == 3 and dropped == 0
+
+    def test_bigrams_ignore_whitespace(self):
+        assert _bigrams("a b") == _bigrams("ab")
+        assert _bigrams("x") == set()
 
 
 class TestExplicitLabel:
