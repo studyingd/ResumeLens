@@ -46,8 +46,11 @@ uv run python main.py
 1. 点快捷预设（DeepSeek / OpenAI / Kimi / 本地 Ollama）自动填入 Base URL 与模型名
 2. 填入 API Key（Ollama 本地服务填任意非空值），可先「测试连接」
 3. 「保存并启用」，右上角徽标变为「AI 评估 · 模型名」
+4. 可选：设置批量评估并发数（1-8，撞限流 429 可调小；也可用环境变量 `LLM_CONCURRENCY` 预置）
 
 配置保存在本机 `config.local.json`（已加入 .gitignore，明文存储，请勿在共享设备使用）。
+
+> ⚠️ **本工具面向本地单机使用，请勿直接暴露到公网**：配置接口允许服务端向你填写的任意 Base URL 发起请求，且 API Key 明文保存在服务端。
 
 **方式二：环境变量** — 复制 `.env.example` 为 `.env`：
 
@@ -79,9 +82,19 @@ LLM_MODEL=deepseek-chat
 │   ├── evaluator.py      # LLM 评估与岗位推荐（OpenAI / Anthropic 兼容调用）
 │   └── config.py         # 配置管理（页面设置 > .env > 默认值，支持热更新）
 ├── static/               # 单页前端（原生 HTML/CSS/JS，无构建步骤）
+├── tests/                # pytest 测试（离线，不请求真实 LLM）
 ├── samples/              # 示例简历
 └── .env.example          # LLM 配置模板
 ```
+
+## 开发
+
+```bash
+uv run ruff check .   # lint
+uv run pytest -q      # 测试（离线，mock LLM）
+```
+
+推送 / PR 到 main 会自动跑 GitHub Actions（lint + 测试，见 `.github/workflows/ci.yml`）。
 
 ## API
 

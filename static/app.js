@@ -54,6 +54,7 @@
     cfgModel: $("#cfg-model"),
     cfgKey: $("#cfg-key"),
     cfgKeyToggle: $("#cfg-key-toggle"),
+    cfgConcurrency: $("#cfg-concurrency"),
     cfgModel: $("#cfg-model"),
     modelDropdown: $("#model-dropdown"),
     modelsRefresh: $("#cfg-models-refresh"),
@@ -827,7 +828,16 @@
     if (!saved || !Array.isArray(saved.items)) return;
     state.rankJd = typeof saved.jd === "string" ? saved.jd : "";
     state.rankBatches = Number(saved.batches) || 1;
-    state.rankData = saved.items.filter((d) => d && d.filename && d.result && typeof d.result.overall_score === "number");
+    const valid = saved.items.filter(
+      (d) => d && d.filename && d.result && typeof d.result.overall_score === "number"
+    );
+    // 旧版本（本地启发式引擎）的榜单记录与现行 AI 口径不可比，恢复时直接剔除
+    state.rankData = valid.filter((d) => d.result.engine === "llm");
+    const legacy = valid.length - state.rankData.length;
+    if (legacy > 0) {
+      deleteResumeFiles(valid.filter((d) => d.result.engine !== "llm").map((d) => d.file_id));
+      toast(`已忽略 ${legacy} 条旧版本（本地引擎）榜单记录，如需纳入请重新评估`, "info", 4200);
+    }
     if (!state.rankData.length) {
       deleteResumeFiles((saved.items ?? []).map((d) => d?.file_id)); // 存储损坏无效，附件一并清理
       clearRankStorage();
@@ -1206,6 +1216,7 @@
       saved = null;
     }
     if (!saved || !saved.result || typeof saved.result.overall_score !== "number") return;
+    if (saved.result.engine !== "llm") return; // 旧版本（本地引擎）结果与现行口径不可比，不恢复
     state.lastCheck = saved;
     if (saved.mode === "match" && saved.jd && els.jdInput.value.trim() === "") {
       els.jdInput.value = saved.jd;
@@ -1580,6 +1591,7 @@
       const data = await res.json();
       els.cfgBaseurl.value = data.base_url ?? "";
       els.cfgModel.value = data.model ?? "";
+      els.cfgConcurrency.value = data.llm_concurrency ?? 4;
       els.cfgKey.value = "";
       els.cfgKey.placeholder = data.api_key_masked
         ? `已保存：${data.api_key_masked}（留空则保持不变）`
@@ -1809,6 +1821,7 @@
         api_key: key || "__KEEP__",
         base_url: baseUrl,
         model: model,
+        llm_concurrency: Math.min(8, Math.max(1, Number(els.cfgConcurrency.value) || 4)),
       });
       if (!res.ok) throw new Error(data?.detail ?? "保存失败");
       await refreshEngine();

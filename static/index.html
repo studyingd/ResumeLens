@@ -313,6 +313,11 @@
         </div>
       </div>
 
+      <div class="field">
+        <label for="cfg-concurrency" class="field-label">批量评估并发 <span class="field-hint">（同一批简历同时评估的份数，撞限流 429 可调小）</span></label>
+        <input type="number" id="cfg-concurrency" class="text-input" min="1" max="8" step="1" value="4" inputmode="numeric" />
+      </div>
+
       <p id="cfg-status" class="modal-status" hidden></p>
 
       <div class="modal-actions">

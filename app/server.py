@@ -62,6 +62,7 @@ class LLMConfigBody(BaseModel):
     api_key: str = ""
     base_url: str = ""
     model: str = ""
+    llm_concurrency: int | None = None
 
 
 def _normalize_result(result: dict) -> dict:
@@ -167,6 +168,7 @@ async def get_config() -> dict:
         "base_url": cfg["base_url"],
         "model": cfg["model"],
         "api_key_masked": config.masked_key(),
+        "llm_concurrency": config.llm_concurrency(),
     }
 
 
@@ -243,6 +245,7 @@ async def test_config(body: LLMConfigBody) -> JSONResponse:
             )
         except Exception:  # noqa: BLE001
             replied = ""
+    del replied  # 只验证连通性，回复内容无业务意义
     return {"ok": True, "message": f"连接成功，模型「{model}」响应正常"}
 
 
@@ -304,15 +307,19 @@ async def save_config(body: LLMConfigBody) -> dict:
         api_key = current["api_key"]
     base_url = config.normalize_base_url(body.base_url.strip() or current["base_url"])
     model = body.model.strip() or current["model"]
+    concurrency = body.llm_concurrency
+    if concurrency is not None and not (1 <= concurrency <= 8):
+        raise HTTPException(422, "批量评估并发数需在 1-8 之间")
     if api_key and (not base_url or not model):
         missing = "API Base URL" if not base_url else "模型名称"
         raise HTTPException(422, f"启用 AI 评估需要完整配置：请填写{missing}")
-    config.save(api_key, base_url, model)
+    config.save(api_key, base_url, model, concurrency)
     return {
         "ok": True,
         "engine": "llm" if config.llm_enabled() else "none",
         "source": config.source(),
         "api_key_masked": config.masked_key(),
+        "llm_concurrency": config.llm_concurrency(),
     }
 
 
@@ -442,12 +449,12 @@ async def batch_evaluate(
             return {"filename": filename, "ok": False, "error": "文件为空"}
         if len(data) > config.MAX_FILE_SIZE:
             return {"filename": filename, "ok": False, "error": "超过 10 MB 限制"}
-        try:
-            resume, meta = await asyncio.to_thread(extract_text, filename, data)
-        except HTTPException as exc:
-            return {"filename": filename, "ok": False, "error": str(exc.detail)}
-
         async with sem:
+            # 解析（含 OCR）也受并发约束：20 份扫描件同时起 OCR 会把 CPU 抢满
+            try:
+                resume, meta = await asyncio.to_thread(extract_text, filename, data)
+            except HTTPException as exc:
+                return {"filename": filename, "ok": False, "error": str(exc.detail)}
             # 事务式：任一份 AI 评估失败立即抛出 → TaskGroup 取消其余任务并终止整批；
             # lean=True 走精简提示词（榜单与只读摘要只需核心字段，单份提速约一半）
             result = await evaluate_with_llm(jd, resume, lean=True)

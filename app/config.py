@@ -79,6 +79,8 @@ def _load_local_overrides() -> None:
             _state["base_url"] = saved["base_url"].rstrip("/")
         if saved.get("model"):
             _state["model"] = saved["model"]
+        if isinstance(saved.get("llm_concurrency"), int):
+            _state["llm_concurrency"] = saved["llm_concurrency"]
         _source = "local"
 
 
@@ -102,19 +104,23 @@ def llm_enabled() -> bool:
 
 
 def llm_concurrency() -> int:
-    """批量评估的 LLM 并发上限（环境变量 LLM_CONCURRENCY，默认 4，范圴1-8）。
+    """批量评估的 LLM 并发上限（页面设置优先于环境变量 LLM_CONCURRENCY，默认 4，范围 1-8）。
 
     并发过高易触发上游限流（429，事务式设计下会终止整批）；
     若同账号还有其他应用占用配额，可将该值调回 2。
     """
+    raw = _state.get("llm_concurrency") or os.getenv("LLM_CONCURRENCY", "4")
     try:
-        return max(1, min(8, int(os.getenv("LLM_CONCURRENCY", "4"))))
-    except ValueError:
+        return max(1, min(8, int(raw)))
+    except (TypeError, ValueError):
         return 4
 
 
-def save(api_key: str, base_url: str, model: str) -> None:
-    """保存页面设置。api_key 为空表示清除本机配置、回到环境变量。"""
+def save(api_key: str, base_url: str, model: str, concurrency: int | None = None) -> None:
+    """保存页面设置。api_key 为空表示清除本机配置、回到环境变量。
+
+    concurrency 为页面设置的批量并发数（1-8）；None 表示未改动，沿用现有生效值。
+    """
     global _state, _source
     api_key = (api_key or "").strip()
     if not api_key:
@@ -127,14 +133,13 @@ def save(api_key: str, base_url: str, model: str) -> None:
     _state["base_url"] = normalize_base_url(base_url)
     if (model or "").strip():
         _state["model"] = model.strip()
-    _LOCAL_FILE.write_text(
-        json.dumps(
-            {"api_key": _state["api_key"], "base_url": _state["base_url"], "model": _state["model"]},
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    saved = {"api_key": _state["api_key"], "base_url": _state["base_url"], "model": _state["model"]}
+    if concurrency is not None:
+        if not (isinstance(concurrency, int) and 1 <= concurrency <= 8):
+            raise ValueError("批量评估并发数需在 1-8 之间")
+        _state["llm_concurrency"] = concurrency
+        saved["llm_concurrency"] = concurrency
+    _LOCAL_FILE.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
     _source = "local"
 
 
