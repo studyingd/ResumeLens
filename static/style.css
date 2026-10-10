@@ -1726,7 +1726,7 @@ textarea:focus {
   .engine-badge { display: none; }
 }
 
-/* ---------- °ñµ¥·Ö¶Î»Õ±êÓëÍ¬¼¶±ê×¢£¨·Ö²î <=3 Êô²ÉÑù²¨¶¯£© ---------- */
+/* ---------- ï¿½ñµ¥·Ö¶Î»Õ±ï¿½ï¿½ï¿½Í¬ï¿½ï¿½ï¿½ï¿½×¢ï¿½ï¿½ï¿½Ö²ï¿½ <=3 ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ ---------- */
 .rank-band {
   display: inline-block;
   margin-left: 6px;
@@ -1741,12 +1741,3 @@ textarea:focus {
 .rank-band.band-good { background: var(--good-100); color: var(--good-600); }
 .rank-band.band-ok { background: oklch(0.96 0.03 255); color: oklch(0.52 0.11 258); }
 .rank-band.band-warn { background: var(--warn-100); color: var(--warn-600); }
-.rank-tie {
-  display: block;
-  margin-top: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #64748b;
-  text-align: center;
-  white-space: nowrap;
-}

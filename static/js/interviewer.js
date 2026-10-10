@@ -228,10 +228,6 @@ const bandOf = (s) =>
 
 function renderRankList() {
   els.rankMeta.textContent = `共 ${state.rankData.length} 位 · 累计 ${state.rankBatches} 轮 · 排名 = 简历与 JD 的匹配度，非候选人真实能力`;
-  // 相邻两人分差 ≤3：属采样波动范围，标注同级避免过度解读名次先后
-  const ties = state.rankData.map(
-    (d, i, a) => i > 0 && a[i - 1].result.overall_score - d.result.overall_score <= 3
-  );
   els.rankList.innerHTML = state.rankData
     .map((item, i) => {
       const r = item.result;
@@ -256,7 +252,6 @@ function renderRankList() {
         </div>
         <div class="rank-score">
           <span class="rank-score-num">${r.overall_score}</span><span class="rank-score-unit">分</span>
-          ${ties[i] ? '<span class="rank-tie" title="分差 ≤3 分，属采样波动范围内的同级候选人，建议结合维度分与面试表现判断">≈ 同级</span>' : ""}
         </div>
         <button type="button" class="icon-btn rank-remove" data-remove="${i}" aria-label="从排名中移除 ${esc(
           r.candidate || item.filename
