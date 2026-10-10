@@ -46,7 +46,53 @@ def guess_candidate_name(resume_text: str, filename: str) -> str:
 # 面试问题：LLM 引擎
 # ---------------------------------------------------------------------------
 
-_QUESTIONS_PROMPT = """\
+# 四类题目的定位说明（提示词中逐类展开，数量由使用者自定义）
+_CATEGORY_DESCS = {
+    "岗位职责": "针对 JD 中每条核心职责出一题，考察候选人胜任该职责的能力。",
+    "技能验证": "JD 任职要求中的核心技术项。简历有相关描述的结合其描述追问细节与深度；简历未体现的直接出技术题考察掌握程度（题面本身是技术问题，而非问学习经历）。",
+    "情景设计": "基于 JD 职责模拟该岗位的真实工作场景。",
+    "软素质": "协作、沟通或成长性。",
+}
+
+# 默认题量：约 10 题、以岗位为主线（使用者可在生成前自由调整各类数量）
+DEFAULT_QUESTION_COUNTS = {"岗位职责": 4, "技能验证": 3, "情景设计": 2, "软素质": 1}
+
+
+def normalize_question_counts(raw: dict | None) -> dict:
+    """校验并补全题量配置：缺失的类别取默认值，返回四类完整映射。"""
+    if raw is None:
+        return dict(DEFAULT_QUESTION_COUNTS)
+    if not isinstance(raw, dict):
+        raise ValueError("题量配置格式不正确")
+    unknown = [k for k in raw if k not in DEFAULT_QUESTION_COUNTS]
+    if unknown:
+        raise ValueError(f"未知的题目类别：{'、'.join(unknown[:3])}")
+    counts = dict(DEFAULT_QUESTION_COUNTS)
+    for key, val in raw.items():
+        if isinstance(val, bool) or not isinstance(val, int):
+            raise ValueError(f"「{key}」的题量必须为整数")
+        if not 0 <= val <= 10:
+            raise ValueError(f"「{key}」的题量需在 0-10 之间")
+        counts[key] = val
+    total = sum(counts.values())
+    if not 1 <= total <= 20:
+        raise ValueError("四类题量之和需在 1-20 之间")
+    return counts
+
+
+def _counts_block(counts: dict) -> str:
+    """把题量配置渲染成提示词中的题量结构段（数量为硬性要求）。"""
+    lines = []
+    for i, (cat, desc) in enumerate(_CATEGORY_DESCS.items(), 1):
+        n = counts.get(cat, 0)
+        lines.append(f"{i}. {cat}（{n} 题）：{desc}" if n > 0 else f"{i}. {cat}（0 题）：不要生成该类问题。")
+    total = sum(counts.values())
+    return f"题量结构（共 {total} 题；各类数量为硬性要求，必须严格遵守，多出或缺少均不符合要求）：\n" + "\n".join(
+        lines
+    )
+
+
+_QUESTIONS_PROMPT_TMPL = """\
 你是一位有 15 年经验的技术面试官，以结构化、深挖式的面试风格著称。
 你将收到一份【岗位JD】和一位【候选人简历】，请为一场 45 分钟的面试生成问题清单。
 
@@ -57,11 +103,7 @@ _QUESTIONS_PROMPT = """\
   b) JD 要求但简历未体现的能力 → 直接出该技能的技术题考察掌握程度，不要问「你目前基础如何」「举一个快速掌握新技能的例子」这类元问题；
   c) 简历中与 JD 无关的内容（无关项目、无关技能）一律不要出题。
 
-题量结构（约 10 题）：
-1. 岗位职责（3-4 题）：针对 JD 中每条核心职责出一题，考察候选人胜任该职责的能力。
-2. 技能验证（3-4 题）：JD 任职要求中的核心技术项。简历有相关描述的结合其描述追问细节与深度；简历未体现的直接出技术题考察掌握程度（题面本身是技术问题，而非问学习经历）。
-3. 情景设计（1-2 题）：基于 JD 职责模拟该岗位的真实工作场景。
-4. 软素质（1 题）：协作、沟通或成长性。
+{counts_block}
 
 每题必须给出：考察意图（intent，需注明对应 JD 的哪条要求）与参考答案要点（reference，用于面试官评分）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
@@ -75,10 +117,12 @@ _QUESTIONS_PROMPT = """\
 JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；不要出现尾随逗号。"""
 
 
-async def generate_questions_llm(jd: str, resume: str) -> dict:
+async def generate_questions_llm(jd: str, resume: str, counts: dict | None = None) -> dict:
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
-    raw = await chat_text(_QUESTIONS_PROMPT, f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}", temperature=0.4)
+    counts = normalize_question_counts(counts)
+    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts))
+    raw = await chat_text(system, f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}", temperature=0.4)
     data = _extract_json(raw)
 
     questions = []
@@ -95,9 +139,21 @@ async def generate_questions_llm(jd: str, resume: str) -> dict:
     if not questions:
         raise ValueError("模型未返回有效问题")
 
+    # 逐类截断：提示词中数量为硬性要求，但模型仍可能超发——超出配置数量的类别尾部截去
+    used = dict.fromkeys(counts, 0)
+    kept = []
+    for q in questions:
+        cat = q["category"]
+        if cat in used:
+            if used[cat] >= counts[cat]:
+                continue
+            used[cat] += 1
+        kept.append(q)
+    questions = kept[:30]  # 兜底上限（未知类别不受逐类约束）
+
     return {
         "engine": "llm",
-        "questions": questions[:10],
+        "questions": questions,
         "focus_areas": [str(a) for a in data.get("focus_areas", [])][:4],
         "notice": "简历或 JD 内容过长，已截取前部分生成面试题。" if (resume_cut or jd_cut) else "",
     }

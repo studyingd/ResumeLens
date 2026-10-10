@@ -1741,3 +1741,47 @@ textarea:focus {
 .rank-band.band-good { background: var(--good-100); color: var(--good-600); }
 .rank-band.band-ok { background: oklch(0.96 0.03 255); color: oklch(0.52 0.11 258); }
 .rank-band.band-warn { background: var(--warn-100); color: var(--warn-600); }
+
+/* ---------- 题量配置行（详情弹窗：四类题量可调） ---------- */
+.q-config {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 10px 0 14px;
+  padding: 8px 12px;
+  background: oklch(0.975 0.005 250);
+  border-radius: 8px;
+}
+.q-config-label { font-size: 12px; font-weight: 600; color: #64748b; }
+.qc-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #475569;
+  white-space: nowrap;
+}
+.qc-field input {
+  width: 50px;
+  padding: 3px 6px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+  text-align: center;
+  color: #1a2332;
+  background: #fff;
+}
+.qc-field input:focus { outline: 2px solid oklch(0.75 0.1 250); outline-offset: 1px; border-color: transparent; }
+.qc-total { font-size: 12px; font-weight: 600; color: var(--good-600); }
+.qc-total.is-zero { color: var(--warn-600); }
+.qc-reset {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  color: #64748b;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.qc-reset:hover { color: #1a2332; }

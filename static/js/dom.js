@@ -93,6 +93,13 @@ export const els = {
   qgGenerate: $("#qg-generate"),
   qgGenerateLabel: $("#qg-generate-label"),
   qgResult: $("#qg-result"),
+  // 题量配置（四类数量可调，随生成请求提交）
+  qcJob: $("#qc-job"),
+  qcSkill: $("#qc-skill"),
+  qcScenario: $("#qc-scenario"),
+  qcSoft: $("#qc-soft"),
+  qcTotal: $("#qc-total"),
+  qcReset: $("#qc-reset"),
   // 优化点详情弹窗
   impOverlay: $("#imp-overlay"),
   impClose: $("#imp-close"),

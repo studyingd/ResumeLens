@@ -177,6 +177,39 @@ class TestConfigEndpoints:
         assert r.status_code == 422 and "1-8" in r.json()["detail"]
 
 
+class TestInterviewQuestions:
+    def test_counts_pass_through(self, client, configured_llm, monkeypatch):
+        """题量配置随请求传入生成函数（默认补全为四类完整映射）。"""
+        import app.server as server_mod
+
+        captured = {}
+
+        async def fake(jd, resume, counts=None):
+            captured["counts"] = counts
+            return {
+                "questions": [{"category": "软素质", "question": "q", "intent": "", "reference": ""}],
+                "focus_areas": [],
+                "notice": "",
+            }
+
+        monkeypatch.setattr(server_mod, "generate_questions_llm", fake)
+        r = client.post(
+            "/api/interview-questions",
+            json={"jd": JD, "resume": RESUME, "counts": {"软素质": 2}},
+        )
+        assert r.status_code == 200
+        assert captured["counts"]["软素质"] == 2 and captured["counts"]["岗位职责"] == 4
+        assert r.json()["notice"] == ""
+
+    @pytest.mark.parametrize(
+        ("counts", "hint"),
+        [({"岗位职责": 99}, "0-10"), ({"综合素质": 2}, "未知"), ({"岗位职责": 0, "技能验证": 0, "情景设计": 0, "软素质": 0}, "1-20")],
+    )
+    def test_invalid_counts_422(self, client, configured_llm, counts, hint):
+        r = client.post("/api/interview-questions", json={"jd": JD, "resume": RESUME, "counts": counts})
+        assert r.status_code == 422 and hint in r.json()["detail"]
+
+
 class TestResumeFiles:
     def test_delete_invalid_ids_noop(self, client):
         r = client.request(

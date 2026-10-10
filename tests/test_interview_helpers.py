@@ -1,14 +1,56 @@
-"""interview：候选人姓名识别（榜单展示与附件命名的基础）。"""
+"""interview：候选人姓名识别与题量配置（榜单展示与生成控制的基础）。"""
 
 from __future__ import annotations
 
 import pytest
 
-from app.interview import guess_candidate_name
+from app.interview import (
+    DEFAULT_QUESTION_COUNTS,
+    _counts_block,
+    guess_candidate_name,
+    normalize_question_counts,
+)
 
 
 def resume_with_lines(*lines: str) -> str:
     return "\n".join(lines) + "\n" + "项目经验若干。\n" * 5
+
+
+class TestQuestionCounts:
+    def test_defaults_when_none(self):
+        assert normalize_question_counts(None) == DEFAULT_QUESTION_COUNTS
+
+    def test_partial_uses_defaults(self):
+        counts = normalize_question_counts({"软素质": 0})
+        assert counts["软素质"] == 0 and counts["岗位职责"] == 4
+
+    def test_all_zero_rejected(self):
+        with pytest.raises(ValueError, match="1-20"):
+            normalize_question_counts({k: 0 for k in DEFAULT_QUESTION_COUNTS})
+
+    def test_value_out_of_range(self):
+        with pytest.raises(ValueError, match="0-10"):
+            normalize_question_counts({"岗位职责": 11})
+        with pytest.raises(ValueError, match="0-10"):
+            normalize_question_counts({"岗位职责": -1})
+
+    def test_non_int_rejected(self):
+        with pytest.raises(ValueError, match="整数"):
+            normalize_question_counts({"岗位职责": "3"})
+
+    def test_unknown_category_rejected(self):
+        with pytest.raises(ValueError, match="未知"):
+            normalize_question_counts({"综合素质": 2})
+
+    def test_total_over_20_rejected(self):
+        with pytest.raises(ValueError, match="1-20"):
+            normalize_question_counts({"岗位职责": 10, "技能验证": 10, "情景设计": 5})
+
+    def test_counts_block_content(self):
+        block = _counts_block({"岗位职责": 3, "技能验证": 4, "情景设计": 0, "软素质": 1})
+        assert "共 8 题" in block
+        assert "岗位职责（3 题）" in block and "技能验证（4 题）" in block
+        assert "情景设计（0 题）：不要生成该类问题。" in block
 
 
 class TestExplicitLabel:

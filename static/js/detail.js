@@ -157,6 +157,70 @@ function renderQuestions(data) {
       .join("")}`;
 }
 
+/* ---------- 题量配置（四类数量可调，偏好持久化，随生成请求提交） ---------- */
+
+const QCOUNTS_LS_KEY = "resumelens.qcounts.v1";
+const QC_DEFAULTS = { 岗位职责: 4, 技能验证: 3, 情景设计: 2, 软素质: 1 };
+const QC_FIELDS = [
+  ["qcJob", "岗位职责"],
+  ["qcSkill", "技能验证"],
+  ["qcScenario", "情景设计"],
+  ["qcSoft", "软素质"],
+];
+
+function readQCounts() {
+  const counts = {};
+  for (const [el, cat] of QC_FIELDS) {
+    counts[cat] = Math.min(10, Math.max(0, Math.round(Number(els[el].value) || 0)));
+  }
+  return counts;
+}
+
+function qcTotal(counts = readQCounts()) {
+  return Object.values(counts).reduce((a, b) => a + b, 0);
+}
+
+function updateQcTotal() {
+  const total = qcTotal();
+  els.qcTotal.textContent = `共 ${total} 题`;
+  els.qcTotal.classList.toggle("is-zero", total === 0);
+}
+
+function saveQCounts() {
+  try {
+    localStorage.setItem(QCOUNTS_LS_KEY, JSON.stringify(readQCounts()));
+  } catch {
+    /* 忽略 */
+  }
+}
+
+function loadQCounts() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(QCOUNTS_LS_KEY) ?? "null");
+  } catch {
+    saved = null;
+  }
+  const counts = { ...QC_DEFAULTS, ...(saved && typeof saved === "object" ? saved : {}) };
+  for (const [el, cat] of QC_FIELDS) {
+    els[el].value = Math.min(10, Math.max(0, Math.round(Number(counts[cat]) || 0)));
+  }
+  updateQcTotal();
+}
+
+QC_FIELDS.forEach(([el]) => els[el].addEventListener("input", updateQcTotal));
+els.qcReset.addEventListener("click", () => {
+  for (const [el, cat] of QC_FIELDS) els[el].value = QC_DEFAULTS[cat];
+  try {
+    localStorage.removeItem(QCOUNTS_LS_KEY);
+  } catch {
+    /* 忽略 */
+  }
+  updateQcTotal();
+  toast("已恢复默认题量（4 / 3 / 2 / 1）", "info", 2200);
+});
+loadQCounts();
+
 els.qgGenerate.addEventListener("click", async () => {
   if (state.detailIndex < 0) return;
   const item = state.rankData[state.detailIndex];
@@ -169,6 +233,12 @@ els.qgGenerate.addEventListener("click", async () => {
     toast("该候选人简历内容不可用");
     return;
   }
+  const counts = readQCounts();
+  if (!qcTotal(counts)) {
+    toast("题量配置为 0 题，请至少设置一题");
+    return;
+  }
+  saveQCounts(); // 生成时记住本次配置，后续候选人沿用
 
   els.qgGenerate.disabled = true;
   els.qgGenerateLabel.textContent = "生成中…";
@@ -177,7 +247,7 @@ els.qgGenerate.addEventListener("click", async () => {
     const res = await fetch("/api/interview-questions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jd, resume: item.resume }),
+      body: JSON.stringify({ jd, resume: item.resume, counts }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);

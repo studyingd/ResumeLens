@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from . import config
 from .evaluator import evaluate_with_llm, recommend_jobs_llm
-from .interview import generate_questions_llm, guess_candidate_name, regen_question_llm
+from .interview import generate_questions_llm, guess_candidate_name, normalize_question_counts, regen_question_llm
 from .parser import extract_text
 
 app = FastAPI(title="ResumeLens", docs_url=None, redoc_url=None)
@@ -93,6 +93,7 @@ _PROVIDER_MODEL_SUGGESTIONS: list[tuple[str, str, list[str]]] = [
 class QuestionsBody(BaseModel):
     jd: str
     resume: str
+    counts: dict | None = None  # 四类题量：岗位职责/技能验证/情景设计/软素质，缺省取默认 4/3/2/1
 
 
 class JobRecommendBody(BaseModel):
@@ -504,9 +505,13 @@ async def interview_questions(body: QuestionsBody) -> JSONResponse:
     if len(resume) < 50:
         raise HTTPException(422, "简历内容过短，无法生成针对性问题")
 
+    try:
+        counts = normalize_question_counts(body.counts)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
     _require_llm()
     try:
-        data = await generate_questions_llm(jd, resume)
+        data = await generate_questions_llm(jd, resume, counts)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"AI 生成面试题失败：{exc}。可重试")
     data.setdefault("notice", "")
