@@ -78,12 +78,13 @@ export function openDetail(i) {
     <div class="chip-set chip-good">${matched.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>
     <div class="chip-set chip-warn detail-kw-missing">${missing.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>`;
 
-  // 简历附件：左栏内点击「查看简历」展开（懒加载附件原件）
+  // 简历附件：左栏内点击「查看简历」展开（原件/文本视图可切换，展开时懒加载）
   const hasFile = Boolean(item.file_id);
   const hasResumeText = Boolean((item.resume ?? "").trim());
+  els.resumeFrame.removeAttribute("srcdoc");
   els.resumeFrame.src = "";
-  els.resumeFrame.hidden = !hasFile;
-  els.resumeMissing.hidden = hasFile || !hasResumeText;
+  els.resumeFrame.hidden = !hasFile && !hasResumeText;
+  els.resumeMissing.hidden = hasFile || hasResumeText;
   els.resumeToggle.hidden = !hasFile && !hasResumeText;
   setResumeOpen(false);
 
@@ -121,19 +122,52 @@ els.detailOverlay.addEventListener("click", (e) => {
   if (e.target === els.detailOverlay) closeDetail();
 });
 
+// 简历视图：原件（PDF 原生阅读器 / DOCX、TXT 转HTML）或 文本（解析文本，划词捕获必备）
+let resumeViewMode = "file"; // 页面级记忆：切换候选人时保持
+
+function buildResumeTextDoc(text) {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
+body{font-family:"Noto Sans SC","Microsoft YaHei",sans-serif;margin:0;padding:22px 26px;color:#1a2332;background:#fff;line-height:1.9;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
+.note{color:#94a3b8;font-size:12px;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin:0 0 14px}
+</style></head><body><p class="note">解析文本视图：可划词捕获片段用于定向换题</p>${esc(text)}</body></html>`;
+}
+
+function showResume() {
+  const item = state.rankData[state.detailIndex];
+  const hasFile = Boolean(item?.file_id);
+  const text = (item?.resume ?? "").trim();
+  const mode = resumeViewMode === "text" || !hasFile ? "text" : "file";
+  els.rvFile.classList.toggle("is-active", mode === "file");
+  els.rvText.classList.toggle("is-active", mode === "text");
+  els.rvFile.disabled = !hasFile;
+  els.resumeMissing.hidden = hasFile || Boolean(text);
+  if (mode === "file") {
+    els.resumeFrame.removeAttribute("srcdoc");
+    if (!els.resumeFrame.src.includes(item.file_id)) {
+      els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(item.file_id)}`;
+    }
+  } else {
+    els.resumeFrame.srcdoc = buildResumeTextDoc(text || "（无解析文本）");
+  }
+}
+
+els.rvFile.addEventListener("click", () => {
+  resumeViewMode = "file";
+  if (els.resumeBody.hidden) setResumeOpen(true);
+  else showResume();
+});
+els.rvText.addEventListener("click", () => {
+  resumeViewMode = "text";
+  if (els.resumeBody.hidden) setResumeOpen(true);
+  else showResume();
+});
+
 function setResumeOpen(open) {
   els.resumeBody.hidden = !open;
   els.resumeToggle.setAttribute("aria-expanded", String(open));
   els.resumeToggleLabel.textContent = open ? "收起简历" : "查看简历";
   els.resumeToggle.classList.toggle("is-open", open);
-  if (open) {
-    // 懒加载：展开时才加载附件，避免每次打开弹窗都发起请求
-    const item = state.rankData[state.detailIndex];
-    const fileId = item?.file_id;
-    if (fileId && !els.resumeFrame.src.includes(fileId)) {
-      els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(fileId)}`;
-    }
-  }
+  if (open) showResume(); // 展开时按当前视图模式懒加载（原件请求附件 / 文本用已有解析文本）
 }
 
 els.resumeToggle.addEventListener("click", () => {
@@ -387,7 +421,7 @@ els.qgGenerate.addEventListener("click", async () => {
 const regenForm = document.createElement("div");
 regenForm.className = "q-regen-form";
 regenForm.innerHTML = `
-  <p class="qregen-tip">锚定简历片段（可选）：划词捕获后自动填入；PDF 预览可在其中选中复制后粘贴到这里</p>
+  <p class="qregen-tip">锚定简历片段（可选）：切到简历「文本」视图划词捕获后自动填入；也可手动粘贴</p>
   <textarea rows="3" maxlength="2000" placeholder="想让新题围绕简历中的哪段内容深挖？留空则按 JD 主线换题"></textarea>
   <input type="text" class="qregen-hint" maxlength="100" placeholder="补充要求（可选）：如「更偏原理细节」「换个项目经历问」" />
   <div class="qregen-act">
