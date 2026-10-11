@@ -7,7 +7,6 @@ import pytest
 from app.interview import (
     DEFAULT_QUESTION_COUNTS,
     _counts_block,
-    _length_block,
     _normalize_category,
     _salvage_questions,
     _shortage_block,
@@ -85,16 +84,6 @@ class TestSalvageQuestions:
     def test_no_complete_object_raises(self):
         with pytest.raises(ValueError):
             _salvage_questions('{"questions": [{"question": "q1')
-
-
-class TestLengthBlock:
-    def test_no_constraint_for_normal_counts(self):
-        """常规题量（≤12）预算充足，不限篇幅，保留完整深度。"""
-        assert _length_block(10) == ""
-
-    def test_constraint_only_for_large_counts(self):
-        block = _length_block(20)
-        assert "篇幅约束" in block and "reference ≤ 150 字" in block
 
 
 class TestNormalizeCategory:

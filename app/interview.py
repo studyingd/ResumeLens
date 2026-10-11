@@ -109,7 +109,6 @@ _QUESTIONS_PROMPT_TMPL = """\
 
 {counts_block}
 
-{length_block}
 每题必须给出：考察意图（intent，岗位职责/情景设计题注明「对应JD职责：××」、技能验证题注明「对应JD任职要求：××」、软素质题注明考察维度）与参考答案要点（reference，用于面试官评分，需具体到可对照评分的程度）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
 {
@@ -120,16 +119,6 @@ _QUESTIONS_PROMPT_TMPL = """\
 }
 
 JSON 格式硬性要求（违反会导致解析失败）：字符串值内部不要使用英文双引号 "，如需引用词语请用中文引号「」；不要出现尾随逗号。"""
-
-
-def _length_block(total: int) -> str:
-    """篇幅约束仅在大题量（输出预算承压）时启用；常规题量不限制，保留完整深度。"""
-    if total <= 12:
-        return ""
-    return (
-        "篇幅约束（总题量较大，输出预算有限，超长会被截断导致失败）："
-        "每题 question ≤ 80 字、intent ≤ 50 字、reference ≤ 150 字，reference 精炼为要点（顿号分隔），不要展开成长段落。\n\n"
-    )
 
 
 def _salvage_questions(raw: str) -> dict:
@@ -203,9 +192,7 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
     counts = normalize_question_counts(counts)
-    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts)).replace(
-        "{length_block}", _length_block(sum(counts.values()))
-    )
+    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts))
     raw = await chat_text(
         system,
         f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}",
