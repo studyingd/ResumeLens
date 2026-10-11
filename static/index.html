@@ -368,21 +368,22 @@
       </div>
 
       <div class="detail-workspace" id="detail-workspace">
-        <div class="resume-block">
+        <div class="ws-tabs">
+          <button type="button" id="ws-tab-resume" class="ws-tab" aria-pressed="false">简历</button>
+          <button type="button" id="ws-tab-questions" class="ws-tab" aria-pressed="false">面试题</button>
+        </div>
+        <p class="ws-hint" id="ws-hint">点击上方「简历」「面试题」按需展开对应栏目；两者同时展开时自动并排分栏</p>
+        <div class="resume-block" id="resume-panel" hidden>
           <div class="questions-head">
             <h5 class="detail-sec-title">简历附件</h5>
-            <button type="button" id="resume-toggle" class="btn btn-ghost btn-sm resume-toggle" aria-expanded="false" aria-controls="resume-body">
-              <svg class="resume-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-              <span id="resume-toggle-label">查看简历</span>
-            </button>
           </div>
-          <div id="resume-body" class="resume-body" hidden>
+          <div id="resume-body" class="resume-body">
             <iframe id="resume-frame" class="resume-frame" title="简历附件预览"></iframe>
             <p id="resume-missing" class="resume-truncated" hidden>该候选人未保存简历附件（历史数据或存储失败），请重新上传评估后查看原件。</p>
           </div>
         </div>
 
-        <div class="questions-block">
+        <div class="questions-block" id="questions-panel" hidden>
           <div class="questions-head">
             <h5 class="detail-sec-title">结构化面试题</h5>
             <button type="button" id="qg-generate" class="btn btn-primary btn-sm">

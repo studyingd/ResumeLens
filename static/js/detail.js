@@ -78,14 +78,16 @@ export function openDetail(i) {
     <div class="chip-set chip-good">${matched.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>
     <div class="chip-set chip-warn detail-kw-missing">${missing.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>`;
 
-  // 简历附件：默认收起，展开后内嵌展示原件（PDF 原生阅读器 / DOCX、TXT 转 HTML 预览）
+  // 简历附件：右侧「简历」页签点击后展示（懒加载附件原件）
   const hasFile = Boolean(item.file_id);
   const hasResumeText = Boolean((item.resume ?? "").trim());
   els.resumeFrame.src = "";
   els.resumeFrame.hidden = !hasFile;
   els.resumeMissing.hidden = hasFile || !hasResumeText;
-  els.resumeToggle.hidden = !hasFile && !hasResumeText;
-  setResumeOpen(false);
+  if (wsResumeOpen && hasFile) {
+    els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(item.file_id)}`;
+  }
+  applyWorkspaceLayout();
 
   // 题单随候选人持久保留，直到使用者主动重新生成；后台生成中则展示进度而非旧题单
   if (item.qgen === "pending") {
@@ -121,24 +123,40 @@ els.detailOverlay.addEventListener("click", (e) => {
   if (e.target === els.detailOverlay) closeDetail();
 });
 
-function setResumeOpen(open) {
-  els.resumeBody.hidden = !open;
-  els.detailWorkspace.classList.toggle("is-split", open); // 展开时简历与题单并排，简历吸顶常驻
-  els.resumeToggle.setAttribute("aria-expanded", String(open));
-  els.resumeToggleLabel.textContent = open ? "收起简历" : "查看简历";
-  els.resumeToggle.classList.toggle("is-open", open);
-  if (open) {
-    // 懒加载：展开时才加载附件，避免每次打开弹窗都发起请求
+// ---------------------------------------------------------------------------
+// 右侧工作区页签：简历 / 面试题 均需点击后才显示；两者齐开时并排分栏
+// 展开状态页面级记忆：切换候选人时保持，避免重复点击
+// ---------------------------------------------------------------------------
+let wsResumeOpen = false;
+let wsQuestionsOpen = false;
+
+function applyWorkspaceLayout() {
+  els.resumePanel.hidden = !wsResumeOpen;
+  els.questionsPanel.hidden = !wsQuestionsOpen;
+  els.wsTabResume.classList.toggle("is-active", wsResumeOpen);
+  els.wsTabResume.setAttribute("aria-pressed", String(wsResumeOpen));
+  els.wsTabQuestions.classList.toggle("is-active", wsQuestionsOpen);
+  els.wsTabQuestions.setAttribute("aria-pressed", String(wsQuestionsOpen));
+  els.detailWorkspace.dataset.mode = wsResumeOpen && wsQuestionsOpen ? "both" : wsResumeOpen ? "resume" : wsQuestionsOpen ? "questions" : "none";
+  els.wsHint.hidden = wsResumeOpen || wsQuestionsOpen;
+}
+
+els.wsTabResume.addEventListener("click", () => {
+  wsResumeOpen = !wsResumeOpen;
+  if (wsResumeOpen) {
+    // 懒加载：首次展开时才加载附件，避免每次打开弹窗都发起请求
     const item = state.rankData[state.detailIndex];
     const fileId = item?.file_id;
     if (fileId && !els.resumeFrame.src.includes(fileId)) {
       els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(fileId)}`;
     }
   }
-}
+  applyWorkspaceLayout();
+});
 
-els.resumeToggle.addEventListener("click", () => {
-  setResumeOpen(els.resumeBody.hidden);
+els.wsTabQuestions.addEventListener("click", () => {
+  wsQuestionsOpen = !wsQuestionsOpen;
+  applyWorkspaceLayout();
 });
 
 // ---------------------------------------------------------------------------

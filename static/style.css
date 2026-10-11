@@ -1562,15 +1562,7 @@ textarea:focus {
 
 /* 简历附件预览 */
 
-.resume-block {
-  margin-top: 10px;
-  border-top: 1px dashed var(--border);
-  padding-top: 4px;
-}
-.resume-toggle .resume-chevron {
-  transition: transform var(--dur-base) var(--ease-out);
-}
-.resume-toggle.is-open .resume-chevron { transform: rotate(180deg); }
+.resume-block { min-width: 0; }
 
 .resume-frame {
   display: block;
@@ -1593,11 +1585,7 @@ textarea:focus {
 
 /* 面试题 */
 
-.questions-block {
-  margin-top: 10px;
-  border-top: 1px dashed var(--border);
-  padding-top: 4px;
-}
+.questions-block { min-width: 0; }
 .questions-head {
   display: flex;
   align-items: center;
@@ -1953,22 +1941,54 @@ textarea:focus {
 }
 
 /* ����չ��ʱ�������������Ⲣ�ţ�����������פ�����ʳ���/���մ𰸶�ͬ���ɼ��� */
-.detail-workspace.is-split {
+/* 右侧工作区页签：简历 / 面试题 点击后展开，齐开时并排 */
+.ws-tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.ws-tab {
+  padding: 7px 18px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-subtle);
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out);
+}
+.ws-tab:hover { border-color: var(--brand-700); color: var(--text); }
+.ws-tab.is-active {
+  background: var(--brand-700);
+  border-color: var(--brand-700);
+  color: oklch(0.98 0.01 195);
+}
+.ws-hint {
+  margin: 0;
+  padding: 30px 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-faint);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+
+.ws-tabs, .ws-hint { grid-column: 1 / -1; }
+.detail-workspace[data-mode="both"] {
   grid-template-columns: minmax(320px, 5fr) minmax(360px, 6fr);
   gap: 0 20px;
 }
-.detail-workspace.is-split .resume-block {
+.detail-workspace[data-mode="both"] .resume-block {
   position: sticky;
   top: 0;
-  margin-top: 14px;
 }
-.detail-workspace.is-split .resume-frame { height: min(60vh, 680px); }
+.detail-workspace[data-mode="both"] .resume-frame { height: min(60vh, 680px); }
+.detail-workspace[data-mode="resume"] .resume-frame { height: min(68vh, 760px); }
 
 /* խ������Ϊ���жѵ�������ԭ����Ϊ�� */
 @media (max-width: 1080px) {
   .detail-body { grid-template-columns: 1fr; }
   .detail-sections { border-right: none; padding-right: 0; }
-  .detail-workspace.is-split { grid-template-columns: 1fr; }
-  .detail-workspace.is-split .resume-block { position: static; margin-top: 0; }
-  .detail-workspace.is-split .resume-frame { height: 480px; }
+  .detail-workspace[data-mode="both"] { grid-template-columns: 1fr; }
+  .detail-workspace[data-mode="both"] .resume-block { position: static; }
+  .detail-workspace[data-mode="both"] .resume-frame,
+  .detail-workspace[data-mode="resume"] .resume-frame { height: 480px; }
+  .questions-block { margin-top: 16px; }
 }
