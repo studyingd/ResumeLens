@@ -110,6 +110,7 @@ export function openDetail(i) {
 
 export function closeDetail() {
   if (!els.impOverlay.hidden) closeImprovement(); // 详情关闭时叠加的优化点弹窗一并关闭
+  hideSelectBtn();
   els.detailOverlay.hidden = true;
   document.body.style.overflow = "";
   state.detailIndex = -1;
@@ -137,6 +138,69 @@ function setResumeOpen(open) {
 
 els.resumeToggle.addEventListener("click", () => {
   setResumeOpen(els.resumeBody.hidden);
+});
+
+// ---------------------------------------------------------------------------
+// 定向出题：面试官在简历预览里划选重点片段，浮出「就选中内容出题」按钮锚定
+// ---------------------------------------------------------------------------
+let focusSnippet = null; // 页面级暂存，随生成请求提交，不持久化
+
+const selectBtn = document.createElement("button");
+selectBtn.type = "button";
+selectBtn.className = "sel-quote-btn";
+selectBtn.textContent = "✂ 就选中内容出题";
+selectBtn.hidden = true;
+document.body.appendChild(selectBtn);
+
+function hideSelectBtn() {
+  selectBtn.hidden = true;
+}
+
+// 简历预览是同源 iframe：load 后在内部文档监听 mouseup，划词后浮出锚定按钮
+els.resumeFrame.addEventListener("load", () => {
+  const doc = els.resumeFrame.contentDocument;
+  if (!doc) return;
+  doc.addEventListener(
+    "mouseup",
+    () => {
+      const sel = doc.getSelection();
+      const text = sel ? sel.toString().trim() : "";
+      if (!text || text.length < 8 || sel.rangeCount === 0) return hideSelectBtn();
+      const rect = sel.getRangeAt(0).getBoundingClientRect();
+      selectBtn.dataset.snippet = text.slice(0, 2000);
+      selectBtn.hidden = false;
+      selectBtn.style.left = `${Math.max(8, Math.min(window.innerWidth - 160, rect.left + rect.width / 2 - 70))}px`;
+      selectBtn.style.top = `${Math.max(8, rect.top - 38)}px`;
+    }
+  );
+  doc.addEventListener("scroll", hideSelectBtn, true);
+});
+// 点其它地方 / 窗口滚动或缩放时收起按钮
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (e.target !== selectBtn) hideSelectBtn();
+  },
+  true
+);
+window.addEventListener("scroll", hideSelectBtn, true);
+window.addEventListener("resize", hideSelectBtn);
+
+selectBtn.addEventListener("click", () => {
+  const text = selectBtn.dataset.snippet || "";
+  hideSelectBtn();
+  if (!text) return;
+  focusSnippet = text;
+  els.qFocus.hidden = false;
+  els.qFocusChip.textContent = `已锚定：${text.length > 26 ? `${text.slice(0, 26)}…` : text}`;
+  els.qFocusChip.title = text;
+  els.resumeFrame.contentDocument?.getSelection()?.removeAllRanges();
+  toast("已锚定选中片段，生成将优先围绕它出题", "success", 2600);
+});
+
+els.qFocusClear.addEventListener("click", () => {
+  focusSnippet = null;
+  els.qFocus.hidden = true;
 });
 
 // 异步回调写 DOM 前的守卫：弹窗当前展示的必须仍是这位候选人，避免后台完成的题单串进别人的弹窗
@@ -277,13 +341,20 @@ els.qgGenerate.addEventListener("click", async () => {
 
   els.qgGenerate.disabled = true;
   els.qgGenerateLabel.textContent = "生成中…";
-  els.qgResult.innerHTML = '<div class="q-loading">正在生成结构化面试题，AI 模式约需半分钟…</div>';
+  els.qgResult.innerHTML = `<div class="q-loading">正在${focusSnippet ? "围绕锚定片段" : ""}生成结构化面试题，AI 模式约需半分钟…</div>`;
   item.qgen = "pending"; // 标记生成中：重开弹窗时展示进度而不是旧题单（不持久化，刷新后作废）
+  const emphasis = els.qgEmphasis.value.trim();
   try {
     const res = await fetch("/api/interview-questions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ jd, resume: item.resume, counts }),
+      body: JSON.stringify({
+        jd,
+        resume: item.resume,
+        counts,
+        ...(focusSnippet ? { resume_snippet: focusSnippet } : {}),
+        ...(emphasis ? { emphasis } : {}),
+      }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);

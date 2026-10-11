@@ -81,6 +81,26 @@ def normalize_question_counts(raw: dict | None) -> dict:
     return counts
 
 
+MAX_FOCUS_SNIPPET_CHARS = 4000  # 面试官划选的简历重点片段上限（超出截取前部分）
+MAX_EMPHASIS_CHARS = 500  # 面试官自然语言出题侧重上限
+
+
+def _focus_block(focus_snippet: str | None, emphasis: str | None) -> str:
+    """定向出题段：锚定面试官划选的简历片段 + 自然语言侧重，未指定时为空。"""
+    focus = (focus_snippet or "").strip()
+    emph = (emphasis or "").strip()
+    parts = []
+    if focus:
+        parts.append(
+            f"面试官指定了重点简历片段：\n【{focus}】\n"
+            "请优先围绕该片段出题：技能验证与岗位职责题应优先深挖片段中的具体内容（验证真实性与深度），"
+            "片段之外的内容仅在情景设计/软素质需要时使用。"
+        )
+    if emph:
+        parts.append(f"面试官补充的出题侧重：【{emph}】\n每道题的考察角度都应体现该侧重。")
+    return "\n".join(parts) + "\n\n" if parts else ""
+
+
 def _counts_block(counts: dict) -> str:
     """把题量配置渲染成提示词中的题量结构段（数量为硬性要求）。"""
     lines = []
@@ -109,7 +129,7 @@ _QUESTIONS_PROMPT_TMPL = """\
 
 {counts_block}
 
-每题必须给出：考察意图（intent，岗位职责/情景设计题注明「对应JD职责：××」、技能验证题注明「对应JD任职要求：××」、软素质题注明考察维度）与参考答案要点（reference，用于面试官评分，需具体到可对照评分的程度）。
+{focus_block}每题必须给出：考察意图（intent，岗位职责/情景设计题注明「对应JD职责：××」、技能验证题注明「对应JD任职要求：××」、软素质题注明考察维度）与参考答案要点（reference，用于面试官评分，需具体到可对照评分的程度）。
 只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：
 {
   "questions": [
@@ -188,11 +208,23 @@ def _shortage_block(questions: list[dict], counts: dict) -> str:
     return f"模型实际返回的题量少于配置（{'、'.join(short)}），系模型输出所限，可重试或换用更强模型。" if short else ""
 
 
-async def generate_questions_llm(jd: str, resume: str, counts: dict | None = None) -> dict:
+async def generate_questions_llm(
+    jd: str,
+    resume: str,
+    counts: dict | None = None,
+    *,
+    focus_snippet: str | None = None,
+    emphasis: str | None = None,
+) -> dict:
+    """生成结构化面试题；focus_snippet 为面试官划选的简历重点片段，emphasis 为自然语言出题侧重。"""
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
+    focus_text, focus_cut = cap_text((focus_snippet or "").strip(), MAX_FOCUS_SNIPPET_CHARS)
+    emphasis_text = (emphasis or "").strip()[:MAX_EMPHASIS_CHARS]
     counts = normalize_question_counts(counts)
-    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts))
+    system = _QUESTIONS_PROMPT_TMPL.replace("{counts_block}", _counts_block(counts)).replace(
+        "{focus_block}", _focus_block(focus_text or None, emphasis_text or None)
+    )
     raw = await chat_text(
         system,
         f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}",
@@ -235,6 +267,8 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
     notices = []
     if resume_cut or jd_cut:
         notices.append("简历或 JD 内容过长，已截取前部分生成面试题。")
+    if focus_cut:
+        notices.append("指定的简历片段过长，已截取前部分出题。")
     if salvaged:
         notices.append("模型输出达到长度上限被截断，已保留前面完整的问题；如需更多可适当减少题量后重试。")
     shortage = _shortage_block(questions, counts)

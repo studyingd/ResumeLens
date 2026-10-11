@@ -93,6 +93,11 @@ export const els = {
   qgGenerate: $("#qg-generate"),
   qgGenerateLabel: $("#qg-generate-label"),
   qgResult: $("#qg-result"),
+  // 定向出题：划选片段标签 + 自然语言侧重
+  qFocus: $("#q-focus"),
+  qFocusChip: $("#q-focus-chip"),
+  qFocusClear: $("#q-focus-clear"),
+  qgEmphasis: $("#qg-emphasis"),
   // 题量配置（四类数量可调，随生成请求提交）
   qcJob: $("#qc-job"),
   qcSkill: $("#qc-skill"),

@@ -94,6 +94,8 @@ class QuestionsBody(BaseModel):
     jd: str
     resume: str
     counts: dict | None = None  # 四类题量：岗位职责/技能验证/情景设计/软素质，缺省取默认 4/3/2/1
+    resume_snippet: str | None = None  # 面试官划选的简历重点片段（定向出题，可选）
+    emphasis: str | None = None  # 面试官补充的出题侧重（自然语言，可选）
 
 
 class JobRecommendBody(BaseModel):
@@ -511,7 +513,9 @@ async def interview_questions(body: QuestionsBody) -> JSONResponse:
         raise HTTPException(422, str(exc))
     _require_llm()
     try:
-        data = await generate_questions_llm(jd, resume, counts)
+        data = await generate_questions_llm(
+            jd, resume, counts, focus_snippet=body.resume_snippet, emphasis=body.emphasis
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"AI 生成面试题失败：{exc}。可重试")
     data.setdefault("notice", "")

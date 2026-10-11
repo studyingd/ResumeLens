@@ -1863,3 +1863,68 @@ textarea:focus {
   cursor: pointer;
 }
 .qc-reset:hover { color: #1a2332; }
+
+/* 定向出题：简历划词浮按钮 / 锚定片段标签 / 出题侧重输入框 */
+.sel-quote-btn {
+  position: fixed;
+  z-index: 1200;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  background: var(--brand-700);
+  color: oklch(0.98 0.01 195);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px oklch(0.2 0.04 220 / 0.3);
+  transition: filter var(--dur-base) var(--ease-out);
+}
+.sel-quote-btn:hover { filter: brightness(1.12); }
+
+.q-focus {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+}
+.q-focus-chip {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  background: var(--brand-100);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+.q-focus-clear {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  font-size: 13px;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.q-focus-clear:hover { color: var(--text); }
+
+.qg-emphasis {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 12px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+.qg-emphasis:focus {
+  outline: none;
+  border-color: var(--brand-700);
+}
+.qg-emphasis::placeholder { color: var(--text-faint); }

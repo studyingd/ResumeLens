@@ -7,6 +7,7 @@ import pytest
 from app.interview import (
     DEFAULT_QUESTION_COUNTS,
     _counts_block,
+    _focus_block,
     _normalize_category,
     _salvage_questions,
     _shortage_block,
@@ -84,6 +85,21 @@ class TestSalvageQuestions:
     def test_no_complete_object_raises(self):
         with pytest.raises(ValueError):
             _salvage_questions('{"questions": [{"question": "q1')
+
+
+class TestFocusBlock:
+    def test_empty_when_none(self):
+        assert _focus_block(None, None) == ""
+        assert _focus_block("", "  ") == ""
+
+    def test_snippet_and_emphasis_rendered(self):
+        block = _focus_block("负责库存打减方案", "重点验证真实性")
+        assert "负责库存打减方案" in block and "重点验证真实性" in block
+        assert block.startswith("面试官指定了重点简历片段")
+
+    def test_emphasis_only(self):
+        block = _focus_block(None, "往高并发正确性上问")
+        assert "出题侧重" in block and "面试官指定了重点简历片段" not in block
 
 
 class TestNormalizeCategory:

@@ -184,8 +184,9 @@ class TestInterviewQuestions:
 
         captured = {}
 
-        async def fake(jd, resume, counts=None):
+        async def fake(jd, resume, counts=None, **kwargs):
             captured["counts"] = counts
+            captured.update(kwargs)
             return {
                 "questions": [{"category": "软素质", "question": "q", "intent": "", "reference": ""}],
                 "focus_areas": [],
@@ -200,6 +201,34 @@ class TestInterviewQuestions:
         assert r.status_code == 200
         assert captured["counts"]["软素质"] == 2 and captured["counts"]["岗位职责"] == 4
         assert r.json()["notice"] == ""
+
+    def test_focus_pass_through(self, client, configured_llm, monkeypatch):
+        """划选片段与出题侧重随请求透传给生成函数。"""
+        import app.server as server_mod
+
+        captured = {}
+
+        async def fake(jd, resume, counts=None, **kwargs):
+            captured.update(kwargs)
+            return {
+                "questions": [{"category": "技能验证", "question": "q", "intent": "", "reference": ""}],
+                "focus_areas": [],
+                "notice": "",
+            }
+
+        monkeypatch.setattr(server_mod, "generate_questions_llm", fake)
+        r = client.post(
+            "/api/interview-questions",
+            json={
+                "jd": JD,
+                "resume": RESUME,
+                "resume_snippet": "负责库存打减方案，命中率 98%",
+                "emphasis": "重点验证真实性与高并发正确性",
+            },
+        )
+        assert r.status_code == 200
+        assert captured["focus_snippet"] == "负责库存打减方案，命中率 98%"
+        assert captured["emphasis"] == "重点验证真实性与高并发正确性"
 
     @pytest.mark.parametrize(
         ("counts", "hint"),
