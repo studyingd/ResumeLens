@@ -394,10 +394,7 @@ export function closeImprovement() {
   state.impItem = null;
 }
 
-els.impClose.addEventListener("click", closeImprovement);
-els.impOverlay.addEventListener("click", (e) => {
-  if (e.target === els.impOverlay) closeImprovement();
-});
+els.impClose.addEventListener("click", closeImprovement); // 仅显式关闭：点弹窗外部空白不关闭，避免误触
 els.impCopy.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(state.impItem?.revised_text ?? "");

@@ -115,10 +115,7 @@ export function closeDetail() {
   state.detailIndex = -1;
 }
 
-els.detailClose.addEventListener("click", closeDetail);
-els.detailOverlay.addEventListener("click", (e) => {
-  if (e.target === els.detailOverlay) closeDetail();
-});
+els.detailClose.addEventListener("click", closeDetail); // 仅显式关闭：点弹窗外部空白不关闭，避免误触丢失浏览位置
 
 function setResumeOpen(open) {
   els.resumeBody.hidden = !open;
