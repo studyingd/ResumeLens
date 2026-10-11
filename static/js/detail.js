@@ -78,13 +78,12 @@ export function openDetail(i) {
     <div class="chip-set chip-good">${matched.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>
     <div class="chip-set chip-warn detail-kw-missing">${missing.map((k) => `<span class="kw-chip">${esc(k)}</span>`).join("") || '<span class="empty-note">无</span>'}</div>`;
 
-  // 简历附件：左栏内点击「查看简历」展开（原件/文本视图可切换，展开时懒加载）
+  // 简历附件：左栏内点击「查看简历」展开（懒加载附件原件）
   const hasFile = Boolean(item.file_id);
   const hasResumeText = Boolean((item.resume ?? "").trim());
-  els.resumeFrame.removeAttribute("srcdoc");
   els.resumeFrame.src = "";
-  els.resumeFrame.hidden = !hasFile && !hasResumeText;
-  els.resumeMissing.hidden = hasFile || hasResumeText;
+  els.resumeFrame.hidden = !hasFile;
+  els.resumeMissing.hidden = hasFile || !hasResumeText;
   els.resumeToggle.hidden = !hasFile && !hasResumeText;
   setResumeOpen(false);
 
@@ -111,7 +110,6 @@ export function openDetail(i) {
 
 export function closeDetail() {
   if (!els.impOverlay.hidden) closeImprovement(); // 详情关闭时叠加的优化点弹窗一并关闭
-  hideSelectBtn();
   els.detailOverlay.hidden = true;
   document.body.style.overflow = "";
   state.detailIndex = -1;
@@ -122,124 +120,24 @@ els.detailOverlay.addEventListener("click", (e) => {
   if (e.target === els.detailOverlay) closeDetail();
 });
 
-// 简历视图：原件（PDF 原生阅读器 / DOCX、TXT 转HTML）或 文本（解析文本，划词捕获必备）
-let resumeViewMode = "file"; // 页面级记忆：切换候选人时保持
-
-function buildResumeTextDoc(text) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><style>
-body{font-family:"Noto Sans SC","Microsoft YaHei",sans-serif;margin:0;padding:22px 26px;color:#1a2332;background:#fff;line-height:1.9;font-size:13.5px;white-space:pre-wrap;word-break:break-word}
-.note{color:#94a3b8;font-size:12px;border-bottom:1px solid #e2e8f0;padding-bottom:10px;margin:0 0 14px}
-</style></head><body><p class="note">解析文本视图：可划词捕获片段用于定向换题</p>${esc(text)}</body></html>`;
-}
-
-function showResume() {
-  const item = state.rankData[state.detailIndex];
-  const hasFile = Boolean(item?.file_id);
-  const text = (item?.resume ?? "").trim();
-  const mode = resumeViewMode === "text" || !hasFile ? "text" : "file";
-  els.rvFile.classList.toggle("is-active", mode === "file");
-  els.rvText.classList.toggle("is-active", mode === "text");
-  els.rvFile.disabled = !hasFile;
-  els.resumeMissing.hidden = hasFile || Boolean(text);
-  if (mode === "file") {
-    els.resumeFrame.removeAttribute("srcdoc");
-    if (!els.resumeFrame.src.includes(item.file_id)) {
-      els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(item.file_id)}`;
-    }
-  } else {
-    els.resumeFrame.srcdoc = buildResumeTextDoc(text || "（无解析文本）");
-  }
-}
-
-els.rvFile.addEventListener("click", () => {
-  resumeViewMode = "file";
-  if (els.resumeBody.hidden) setResumeOpen(true);
-  else showResume();
-});
-els.rvText.addEventListener("click", () => {
-  resumeViewMode = "text";
-  if (els.resumeBody.hidden) setResumeOpen(true);
-  else showResume();
-});
-
 function setResumeOpen(open) {
   els.resumeBody.hidden = !open;
   els.resumeToggle.setAttribute("aria-expanded", String(open));
   els.resumeToggleLabel.textContent = open ? "收起简历" : "查看简历";
   els.resumeToggle.classList.toggle("is-open", open);
-  if (open) showResume(); // 展开时按当前视图模式懒加载（原件请求附件 / 文本用已有解析文本）
+  if (open) {
+    // 懒加载：展开时才加载附件，避免每次打开弹窗都发起请求
+    const item = state.rankData[state.detailIndex];
+    const fileId = item?.file_id;
+    if (fileId && !els.resumeFrame.src.includes(fileId)) {
+      els.resumeFrame.src = `/api/resume-file/${encodeURIComponent(fileId)}`;
+    }
+  }
 }
 
 els.resumeToggle.addEventListener("click", () => {
   setResumeOpen(els.resumeBody.hidden);
 });
-
-// ---------------------------------------------------------------------------
-// 划词捕获：在简历预览中选中内容，浮出「捕获选中内容」按钮暂存，
-// 供「换一题」的锚定栏自动填入（PDF 原生阅读器无法捕获，需在其中复制后手动粘贴）
-// ---------------------------------------------------------------------------
-let pendingSnippet = null; // 页面级暂存：最近一次捕获的简历片段，首次使用后消费
-
-const selectBtn = document.createElement("button");
-selectBtn.type = "button";
-selectBtn.className = "sel-quote-btn";
-selectBtn.textContent = "✂ 捕获选中内容";
-selectBtn.hidden = true;
-document.body.appendChild(selectBtn);
-
-function hideSelectBtn() {
-  selectBtn.hidden = true;
-}
-
-// 简历预览是同源 iframe：load 后在内部文档监听 mouseup，划词后浮出捕获按钮
-els.resumeFrame.addEventListener("load", () => {
-  const doc = els.resumeFrame.contentDocument;
-  if (!doc) return;
-  doc.addEventListener(
-    "mouseup",
-    () => {
-      const sel = doc.getSelection();
-      const text = sel ? sel.toString().trim() : "";
-      if (!text || text.length < 8 || sel.rangeCount === 0) return hideSelectBtn();
-      const rect = sel.getRangeAt(0).getBoundingClientRect();
-      selectBtn.dataset.snippet = text.slice(0, 2000);
-      selectBtn.hidden = false;
-      selectBtn.style.left = `${Math.max(8, Math.min(window.innerWidth - 160, rect.left + rect.width / 2 - 70))}px`;
-      selectBtn.style.top = `${Math.max(8, rect.top - 38)}px`;
-    }
-  );
-  doc.addEventListener("scroll", hideSelectBtn, true);
-});
-// 点其它地方 / 窗口滚动或缩放时收起按钮
-document.addEventListener(
-  "mousedown",
-  (e) => {
-    if (e.target !== selectBtn) hideSelectBtn();
-  },
-  true
-);
-window.addEventListener("scroll", hideSelectBtn, true);
-window.addEventListener("resize", hideSelectBtn);
-
-selectBtn.addEventListener("click", () => {
-  const text = selectBtn.dataset.snippet || "";
-  hideSelectBtn();
-  if (!text) return;
-  pendingSnippet = text;
-  els.resumeFrame.contentDocument?.getSelection()?.removeAllRanges();
-  toast("已捕获选中片段：点击任意一题的「换一题」，锚定栏将自动填入", "success", 3200);
-});
-
-// 打开换题表单时优先取最近捕获；若无则尝试实时读取 iframe 选区（HTML 简历）
-function currentIframeSelection() {
-  try {
-    const sel = els.resumeFrame.contentDocument?.getSelection?.();
-    const text = sel ? String(sel).trim() : "";
-    return text.length >= 8 ? text.slice(0, 2000) : "";
-  } catch {
-    return "";
-  }
-}
 
 // 异步回调写 DOM 前的守卫：弹窗当前展示的必须仍是这位候选人，避免后台完成的题单串进别人的弹窗
 function isDetailShowing(item) {
@@ -421,7 +319,7 @@ els.qgGenerate.addEventListener("click", async () => {
 const regenForm = document.createElement("div");
 regenForm.className = "q-regen-form";
 regenForm.innerHTML = `
-  <p class="qregen-tip">锚定简历片段（可选）：切到简历「文本」视图划词捕获后自动填入；也可手动粘贴</p>
+  <p class="qregen-tip">锚定简历片段（可选）：从简历中复制想深挖的内容粘贴到这里，新题将围绕它展开</p>
   <textarea rows="3" maxlength="2000" placeholder="想让新题围绕简历中的哪段内容深挖？留空则按 JD 主线换题"></textarea>
   <input type="text" class="qregen-hint" maxlength="100" placeholder="补充要求（可选）：如「更偏原理细节」「换个项目经历问」" />
   <div class="qregen-act">
@@ -447,8 +345,7 @@ els.qgResult.addEventListener("click", (e) => {
   if (Number.isNaN(idx)) return;
   if (regenOpenIdx === idx && regenForm.isConnected) return closeRegenForm();
   regenOpenIdx = idx;
-  regenAnchor.value = pendingSnippet ?? currentIframeSelection();
-  pendingSnippet = null;
+  regenAnchor.value = "";
   regenHint.value = "";
   regenGo.disabled = false;
   regenGo.textContent = "生成替换";

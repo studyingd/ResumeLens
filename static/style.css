@@ -1859,21 +1859,6 @@ textarea:focus {
 .qc-reset:hover { color: #1a2332; }
 
 /* ������⣺�������ʸ���ť / ê��Ƭ�α�ǩ / ������������ */
-.sel-quote-btn {
-  position: fixed;
-  z-index: 1200;
-  padding: 7px 14px;
-  border: none;
-  border-radius: 999px;
-  background: var(--brand-700);
-  color: oklch(0.98 0.01 195);
-  font-family: var(--font-body);
-  font-size: 12.5px;
-  cursor: pointer;
-  box-shadow: 0 6px 18px oklch(0.2 0.04 220 / 0.3);
-  transition: filter var(--dur-base) var(--ease-out);
-}
-.sel-quote-btn:hover { filter: brightness(1.12); }
 
 .q-focus {
   display: flex;
@@ -1961,30 +1946,6 @@ textarea:focus {
 /* 左栏简历：点击「查看简历」展开，吸顶常驻便于与右栏题单对照 */
 .detail-sections .resume-block { position: sticky; top: 0; }
 .detail-sections .resume-block .resume-frame { height: min(60vh, 680px); }
-/* 简历视图切换：原件 / 文本（文本视图可划词捕获） */
-.rv-toggle {
-  display: inline-flex;
-  padding: 2px;
-  margin-left: auto;
-  gap: 2px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--bg-subtle);
-}
-.rv-btn {
-  padding: 3px 13px;
-  border: none;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-family: var(--font-body);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
-}
-.rv-btn:hover { color: var(--text); }
-.rv-btn.is-active { background: var(--brand-700); color: oklch(0.98 0.01 195); }
-.rv-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .resume-toggle .resume-chevron { transition: transform var(--dur-base) var(--ease-out); }
 .resume-toggle.is-open .resume-chevron { transform: rotate(180deg); }

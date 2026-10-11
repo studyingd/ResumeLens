@@ -87,8 +87,6 @@ export const els = {
   detailKeywords: $("#detail-keywords"),
   resumeToggle: $("#resume-toggle"),
   resumeToggleLabel: $("#resume-toggle-label"),
-  rvFile: $("#rv-file"),
-  rvText: $("#rv-text"),
   resumeBody: $("#resume-body"),
   resumeFrame: $("#resume-frame"),
   resumeMissing: $("#resume-missing"),
