@@ -112,6 +112,8 @@ class QuestionRegenBody(BaseModel):
     question: str
     category: str = ""
     others: list[str] = []
+    focus_snippet: str = ""  # 可选：面试官选中的简历片段，新题优先围绕它深挖
+    hint: str = ""  # 可选：面试官的补充要求
 
 
 MAX_BATCH_FILES = 20
@@ -539,7 +541,9 @@ async def interview_question_regenerate(body: QuestionRegenBody) -> JSONResponse
     _require_llm()
     # 事务式：失败直接报错（避免同一题单风格混杂）
     try:
-        q = await regen_question_llm(jd, resume, category, current, others)
+        q = await regen_question_llm(
+            jd, resume, category, current, others, focus_snippet=body.focus_snippet, hint=body.hint
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"AI 重新生成失败：{exc}。可重试")
     return JSONResponse({"ok": True, "question": q})

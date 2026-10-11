@@ -1905,23 +1905,34 @@ textarea:focus {
 }
 .q-focus-clear:hover { color: var(--text); }
 
-.qg-emphasis {
+/* 换一题锚定表单（嵌在对应题卡内） */
+.q-regen-form {
+  margin-top: 12px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px dashed var(--brand-300);
+  border-radius: var(--radius-sm);
+  background: var(--brand-50);
+}
+.qregen-tip { margin: 0; font-size: 11.5px; color: var(--text-muted); line-height: 1.5; }
+.q-regen-form textarea {
   width: 100%;
-  margin-top: 10px;
-  padding: 9px 12px;
+  resize: vertical;
   font-family: var(--font-body);
-  font-size: 13px;
-  color: var(--text);
-  background: var(--bg-subtle);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  font-size: 12.5px;
 }
-.qg-emphasis:focus {
-  outline: none;
-  border-color: var(--brand-700);
+.q-regen-form .qregen-hint {
+  width: 100%;
+  font-family: var(--font-body);
+  font-size: 12.5px;
 }
-.qg-emphasis::placeholder { color: var(--text-faint); }
+.qregen-act { display: flex; justify-content: flex-end; gap: 8px; }
+.q-card.is-new { animation: qflash 1.8s var(--ease-out); }
+@keyframes qflash {
+  0% { box-shadow: 0 0 0 3px var(--brand-500); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
 
 /* ���鵯���������֣���������ժҪ������������չ��ʱ�������������� */
 .detail-modal { width: min(1280px, calc(100vw - 40px)); }

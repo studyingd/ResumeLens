@@ -141,14 +141,15 @@ els.resumeToggle.addEventListener("click", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 定向出题：面试官在简历预览里划选重点片段，浮出「就选中内容出题」按钮锚定
+// 划词捕获：在简历预览中选中内容，浮出「捕获选中内容」按钮暂存，
+// 供「换一题」的锚定栏自动填入（PDF 原生阅读器无法捕获，需在其中复制后手动粘贴）
 // ---------------------------------------------------------------------------
-let focusSnippet = null; // 页面级暂存，随生成请求提交，不持久化
+let pendingSnippet = null; // 页面级暂存：最近一次捕获的简历片段，首次使用后消费
 
 const selectBtn = document.createElement("button");
 selectBtn.type = "button";
 selectBtn.className = "sel-quote-btn";
-selectBtn.textContent = "✂ 就选中内容出题";
+selectBtn.textContent = "✂ 捕获选中内容";
 selectBtn.hidden = true;
 document.body.appendChild(selectBtn);
 
@@ -156,7 +157,7 @@ function hideSelectBtn() {
   selectBtn.hidden = true;
 }
 
-// 简历预览是同源 iframe：load 后在内部文档监听 mouseup，划词后浮出锚定按钮
+// 简历预览是同源 iframe：load 后在内部文档监听 mouseup，划词后浮出捕获按钮
 els.resumeFrame.addEventListener("load", () => {
   const doc = els.resumeFrame.contentDocument;
   if (!doc) return;
@@ -190,18 +191,21 @@ selectBtn.addEventListener("click", () => {
   const text = selectBtn.dataset.snippet || "";
   hideSelectBtn();
   if (!text) return;
-  focusSnippet = text;
-  els.qFocus.hidden = false;
-  els.qFocusChip.textContent = `已锚定：${text.length > 26 ? `${text.slice(0, 26)}…` : text}`;
-  els.qFocusChip.title = text;
+  pendingSnippet = text;
   els.resumeFrame.contentDocument?.getSelection()?.removeAllRanges();
-  toast("已锚定选中片段，生成将优先围绕它出题", "success", 2600);
+  toast("已捕获选中片段：点击任意一题的「换一题」，锚定栏将自动填入", "success", 3200);
 });
 
-els.qFocusClear.addEventListener("click", () => {
-  focusSnippet = null;
-  els.qFocus.hidden = true;
-});
+// 打开换题表单时优先取最近捕获；若无则尝试实时读取 iframe 选区（HTML 简历）
+function currentIframeSelection() {
+  try {
+    const sel = els.resumeFrame.contentDocument?.getSelection?.();
+    const text = sel ? String(sel).trim() : "";
+    return text.length >= 8 ? text.slice(0, 2000) : "";
+  } catch {
+    return "";
+  }
+}
 
 // 异步回调写 DOM 前的守卫：弹窗当前展示的必须仍是这位候选人，避免后台完成的题单串进别人的弹窗
 function isDetailShowing(item) {
@@ -220,7 +224,7 @@ function renderQuestions(data) {
         <div class="q-head">
           <span class="q-index">${i + 1}</span>
           <span class="q-cat">${esc(q.category)}</span>
-          <button type="button" class="q-regen" data-qregen="${i}" aria-label="重新生成第 ${i + 1} 题" title="对这题不满意？换一题">
+          <button type="button" class="q-regen" data-qregen="${i}" aria-label="重新生成第 ${i + 1} 题" title="对这题不满意？可锚定简历片段定向换一题">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>
             <span>换一题</span>
           </button>
@@ -341,9 +345,8 @@ els.qgGenerate.addEventListener("click", async () => {
 
   els.qgGenerate.disabled = true;
   els.qgGenerateLabel.textContent = "生成中…";
-  els.qgResult.innerHTML = `<div class="q-loading">正在${focusSnippet ? "围绕锚定片段" : ""}生成结构化面试题，AI 模式约需半分钟…</div>`;
+  els.qgResult.innerHTML = '<div class="q-loading">正在生成结构化面试题，AI 模式约需半分钟…</div>';
   item.qgen = "pending"; // 标记生成中：重开弹窗时展示进度而不是旧题单（不持久化，刷新后作废）
-  const emphasis = els.qgEmphasis.value.trim();
   try {
     const res = await fetch("/api/interview-questions", {
       method: "POST",
@@ -352,8 +355,6 @@ els.qgGenerate.addEventListener("click", async () => {
         jd,
         resume: item.resume,
         counts,
-        ...(focusSnippet ? { resume_snippet: focusSnippet } : {}),
-        ...(emphasis ? { emphasis } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -382,16 +383,53 @@ els.qgGenerate.addEventListener("click", async () => {
   }
 });
 
-// 单题重新生成：面试官对某一题不满意时仅替换该题，其余题目保持不变
-els.qgResult.addEventListener("click", async (e) => {
+// 单题重新生成：对某一题不满意时，可锚定简历片段定向换题（其余题目保持不变）
+const regenForm = document.createElement("div");
+regenForm.className = "q-regen-form";
+regenForm.innerHTML = `
+  <p class="qregen-tip">锚定简历片段（可选）：划词捕获后自动填入；PDF 预览可在其中选中复制后粘贴到这里</p>
+  <textarea rows="3" maxlength="2000" placeholder="想让新题围绕简历中的哪段内容深挖？留空则按 JD 主线换题"></textarea>
+  <input type="text" class="qregen-hint" maxlength="100" placeholder="补充要求（可选）：如「更偏原理细节」「换个项目经历问」" />
+  <div class="qregen-act">
+    <button type="button" class="btn btn-ghost btn-sm qregen-cancel">取消</button>
+    <button type="button" class="btn btn-primary btn-sm qregen-go">生成替换</button>
+  </div>`;
+const regenAnchor = regenForm.querySelector("textarea");
+const regenHint = regenForm.querySelector(".qregen-hint");
+const regenGo = regenForm.querySelector(".qregen-go");
+let regenOpenIdx = -1;
+let regenBusy = false;
+
+function closeRegenForm() {
+  regenOpenIdx = -1;
+  regenForm.remove();
+}
+
+// 点「换一题」展开/收起锚定表单；锚定栏自动带入最近捕获或当前选区（首次使用后消费）
+els.qgResult.addEventListener("click", (e) => {
   const btn = e.target.closest(".q-regen");
   if (!btn || btn.classList.contains("is-busy")) return;
+  const idx = Number(btn.dataset.qregen);
+  if (Number.isNaN(idx)) return;
+  if (regenOpenIdx === idx && regenForm.isConnected) return closeRegenForm();
+  regenOpenIdx = idx;
+  regenAnchor.value = pendingSnippet ?? currentIframeSelection();
+  pendingSnippet = null;
+  regenHint.value = "";
+  regenGo.disabled = false;
+  regenGo.textContent = "生成替换";
+  btn.closest(".q-card").appendChild(regenForm);
+  regenAnchor.focus();
+});
+
+regenForm.querySelector(".qregen-cancel").addEventListener("click", closeRegenForm);
+
+regenGo.addEventListener("click", async () => {
+  if (regenBusy || regenOpenIdx < 0) return;
   const item = state.rankData[state.detailIndex];
   const qd = item?.questions;
-  const idx = Number(btn.dataset.qregen);
-  const cur = qd?.questions?.[idx];
-  if (!item || !qd || !cur) return;
-
+  const cur = qd?.questions?.[regenOpenIdx];
+  if (!item || !qd || !cur) return closeRegenForm();
   const jd = els.jdInput.value.trim();
   if (jd.length < 30) {
     toast("岗位 JD 内容不足，无法重新生成");
@@ -402,8 +440,12 @@ els.qgResult.addEventListener("click", async (e) => {
     return;
   }
 
-  btn.classList.add("is-busy");
-  btn.querySelector("span").textContent = "生成中…";
+  const idx = regenOpenIdx;
+  const anchor = regenAnchor.value.trim();
+  const hint = regenHint.value.trim();
+  regenBusy = true;
+  regenGo.disabled = true;
+  regenGo.textContent = "生成中…";
   try {
     const res = await fetch("/api/interview-question-regenerate", {
       method: "POST",
@@ -414,17 +456,33 @@ els.qgResult.addEventListener("click", async (e) => {
         question: cur.question,
         category: cur.category ?? "",
         others: qd.questions.filter((_, i) => i !== idx).map((q) => q.question),
+        ...(anchor ? { focus_snippet: anchor } : {}),
+        ...(hint ? { hint } : {}),
       }),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok || !data?.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
     qd.questions[idx] = data.question;
     saveRank();
-    if (isDetailShowing(item)) renderQuestions(qd); // 弹窗已关闭则不写 DOM，静默保存即可
-    if (data.notice) toast(data.notice, "info", 3800);
-    else toast(`已替换第 ${idx + 1} 题`, "success", 2200);
+    closeRegenForm();
+    if (isDetailShowing(item)) {
+      renderQuestions(qd);
+      const card = els.qgResult.querySelector(`[data-qregen="${idx}"]`)?.closest(".q-card");
+      if (card) {
+        card.classList.add("is-new");
+        card.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    }
+    toast(anchor ? `已围绕锚定片段替换第 ${idx + 1} 题` : `已替换第 ${idx + 1} 题`, "success", 2400);
   } catch (err) {
-    if (isDetailShowing(item)) renderQuestions(qd); // 恢复按钮状态
+    if (isDetailShowing(item)) {
+      regenGo.disabled = false;
+      regenGo.textContent = "重试";
+    } else {
+      closeRegenForm();
+    }
     toast(err.message || "生成失败，请稍后重试");
+  } finally {
+    regenBusy = false;
   }
 });

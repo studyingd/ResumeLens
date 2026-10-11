@@ -288,26 +288,54 @@ async def generate_questions_llm(
 
 
 async def regen_question_llm(
-    jd: str, resume: str, category: str, current: str, others: list[str]
+    jd: str,
+    resume: str,
+    category: str,
+    current: str,
+    others: list[str],
+    *,
+    focus_snippet: str = "",
+    hint: str = "",
 ) -> dict:
-    """重新生成一道题：保持原题类别、锚定 JD、与保留题目不重复。"""
+    """重新生成一道题：保持原题类别、与保留题目不重复。
+
+    focus_snippet：面试官选中的简历片段，新题优先围绕它深挖；
+    hint：面试官的补充要求（如「更偏原理」）。两者均可为空。
+    """
     cat = category or "综合"
     others_text = "\n".join(f"- {o}" for o in others[:20] if o.strip()) or "- （无）"
     jd_text, _ = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, _ = cap_text(resume, MAX_RESUME_CHARS)
+
+    focus_block = ""
+    if focus_snippet.strip():
+        fs, _ = cap_text(focus_snippet.strip(), MAX_FOCUS_SNIPPET_CHARS)
+        focus_block = f"\n【简历锚定片段】面试官希望新题围绕这段简历内容深挖：\n{fs}\n"
+        anchor_rule = (
+            "- 新题优先围绕【简历锚定片段】中的经历或技术点展开深挖，"
+            "并尽量自然对应【岗位JD】中的某条要求（在 intent 中注明）；类别保持不变。\n"
+        )
+    else:
+        anchor_rule = "- 新题必须锚定【岗位JD】中的某条职责或任职要求，以岗位为出题主线；简历仅作交叉参照。\n"
+    hint_block = ""
+    if hint.strip():
+        h, _ = cap_text(hint.strip(), MAX_EMPHASIS_CHARS)
+        hint_block = f"\n【面试官补充要求】\n{h}\n"
+
     system = (
         "你是一位有 15 年经验的技术面试官。一场面试的题单已经确定，面试官对其中一道题不满意，需要你重新出一道来替换它。\n\n"
         "要求（必须遵守）：\n"
-        "- 新题必须锚定【岗位JD】中的某条职责或任职要求，以岗位为出题主线；简历仅作交叉参照。\n"
+        f"{anchor_rule}"
         f"- 考察类别保持不变：category 必须为「{cat}」。\n"
         "- 与【其余保留的题目】不重复，考察角度需与原题有明显差异。\n"
+        "- 单题单点：只考察一个明确的知识点/能力点，不把多个问题捆成一题。\n"
         "- 给出考察意图（intent，注明对应 JD 的哪条要求）与参考答案要点（reference）。\n\n"
         "只输出一个合法 JSON 对象，不要包含 markdown 代码块标记或任何其他文字：\n"
         '{"category": "…", "question": "…", "intent": "…", "reference": "…"}\n\n'
         "JSON 格式硬性要求：字符串值内部不要使用英文双引号，如需引用词语请用中文引号「」；不要出现尾随逗号。"
     )
     user = (
-        f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}\n\n"
+        f"【岗位JD】\n{jd_text}\n{focus_block}\n【候选人简历】\n{resume_text}{hint_block}\n\n"
         f"【需要替换的原题】（类别：{cat}）\n{current}\n\n【其余保留的题目】\n{others_text}"
     )
     raw = await chat_text(system, user, temperature=0.7)

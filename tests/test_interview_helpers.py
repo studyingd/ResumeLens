@@ -171,5 +171,63 @@ class TestFilenameFallback:
         assert guess_candidate_name(resume_with_lines("专业技能"), "") == "未知候选人"
 
 
+JD = "负责后端服务的设计与开发，参与系统架构优化，保障线上稳定性，要求熟悉 MySQL 与缓存。" * 2
+RESUME = "张三，5 年后端经验。主导电商订单系统重构：引入 MySQL 慢查询治理，优化索引与执行计划，QPS 提升 3 倍。"
+
+
+class TestRegenQuestionPrompt:
+    """单题重生成的提示词：锚定片段/补充要求注入，无锚定时回退 JD 主线。"""
+
+    def _capture_chat(self, monkeypatch):
+        import asyncio
+
+        from app import interview
+
+        captured = {}
+
+        async def fake_chat(system, user, temperature=0.7, **kwargs):
+            captured["system"] = system
+            captured["user"] = user
+            return '{"category": "技能验证", "question": "新题", "intent": "i", "reference": "r"}'
+
+        monkeypatch.setattr(interview, "chat_text", fake_chat)
+        return interview, captured, asyncio
+
+    def test_focus_and_hint_injected(self, monkeypatch):
+        interview, captured, asyncio = self._capture_chat(monkeypatch)
+        q = asyncio.run(
+            interview.regen_question_llm(
+                JD,
+                RESUME,
+                "技能验证",
+                "旧题",
+                ["保留题 A", "保留题 B"],
+                focus_snippet="主导订单系统重构，引入 MySQL 慢查询治理",
+                hint="往索引与执行计划细节上问",
+            )
+        )
+        assert q["question"] == "新题"
+        assert q["category"] == "技能验证"
+        assert "【简历锚定片段】" in captured["user"]
+        assert "慢查询治理" in captured["user"]
+        assert "【面试官补充要求】" in captured["user"]
+        assert "索引与执行计划" in captured["user"]
+        assert "优先围绕【简历锚定片段】" in captured["system"]
+        assert "保留题 A" in captured["user"]
+
+    def test_no_focus_falls_back_to_jd_line(self, monkeypatch):
+        interview, captured, asyncio = self._capture_chat(monkeypatch)
+        q = asyncio.run(interview.regen_question_llm(JD, RESUME, "技能验证", "旧题", []))
+        assert q["question"] == "新题"
+        assert "【简历锚定片段】" not in captured["user"]
+        assert "以岗位为出题主线" in captured["system"]
+
+    def test_hint_without_focus(self, monkeypatch):
+        interview, captured, asyncio = self._capture_chat(monkeypatch)
+        asyncio.run(interview.regen_question_llm(JD, RESUME, "技能验证", "旧题", [], hint="换角度"))
+        assert "【面试官补充要求】" in captured["user"]
+        assert "【简历锚定片段】" not in captured["user"]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
