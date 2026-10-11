@@ -1928,7 +1928,7 @@ textarea:focus {
 
 .detail-body {
   display: grid;
-  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 46%) minmax(0, 1fr);
   gap: 4px 24px;
   align-items: start;
 }
@@ -1949,7 +1949,7 @@ textarea:focus {
 /* ����չ��ʱ�������������Ⲣ�ţ�����������פ�����ʳ���/���մ𰸶�ͬ���ɼ��� */
 /* 左栏简历：点击「查看简历」展开，吸顶常驻便于与右栏题单对照 */
 .detail-sections .resume-block { position: sticky; top: 0; }
-.detail-sections .resume-block .resume-frame { height: min(56vh, 620px); }
+.detail-sections .resume-block .resume-frame { height: min(60vh, 680px); }
 .resume-toggle .resume-chevron { transition: transform var(--dur-base) var(--ease-out); }
 .resume-toggle.is-open .resume-chevron { transform: rotate(180deg); }
 
