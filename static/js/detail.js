@@ -87,14 +87,21 @@ export function openDetail(i) {
   els.resumeToggle.hidden = !hasFile && !hasResumeText;
   setResumeOpen(false);
 
-  // 题单随候选人持久保留，直到使用者主动重新生成
-  if (item.questions) {
+  // 题单随候选人持久保留，直到使用者主动重新生成；后台生成中则展示进度而非旧题单
+  if (item.qgen === "pending") {
+    els.qgResult.innerHTML = '<div class="q-loading">正在生成结构化面试题，AI 模式约需半分钟…</div>';
+    els.qgGenerate.disabled = true;
+    els.qgGenerateLabel.textContent = "生成中…";
+  } else if (item.questions) {
     renderQuestions(item.questions);
+    els.qgGenerate.disabled = false;
+    els.qgGenerateLabel.textContent = "重新生成全套题";
   } else {
     els.qgResult.innerHTML =
       '<p class="empty-note">点击右上角按钮，基于岗位 JD 与该候选人简历生成结构化面试题（含考察意图与参考答案要点）</p>';
+    els.qgGenerate.disabled = false;
+    els.qgGenerateLabel.textContent = "基于 JD 与该简历生成面试题";
   }
-  els.qgGenerateLabel.textContent = item.questions ? "重新生成全套题" : "基于 JD 与该简历生成面试题";
 
   els.detailOverlay.hidden = false;
   document.body.style.overflow = "hidden";
@@ -131,6 +138,11 @@ function setResumeOpen(open) {
 els.resumeToggle.addEventListener("click", () => {
   setResumeOpen(els.resumeBody.hidden);
 });
+
+// 异步回调写 DOM 前的守卫：弹窗当前展示的必须仍是这位候选人，避免后台完成的题单串进别人的弹窗
+function isDetailShowing(item) {
+  return state.detailIndex >= 0 && state.rankData[state.detailIndex] === item;
+}
 
 function renderQuestions(data) {
   const focus = (data.focus_areas ?? []).map(esc).join(" · ");
@@ -266,6 +278,7 @@ els.qgGenerate.addEventListener("click", async () => {
   els.qgGenerate.disabled = true;
   els.qgGenerateLabel.textContent = "生成中…";
   els.qgResult.innerHTML = '<div class="q-loading">正在生成结构化面试题，AI 模式约需半分钟…</div>';
+  item.qgen = "pending"; // 标记生成中：重开弹窗时展示进度而不是旧题单（不持久化，刷新后作废）
   try {
     const res = await fetch("/api/interview-questions", {
       method: "POST",
@@ -276,13 +289,25 @@ els.qgGenerate.addEventListener("click", async () => {
     if (!res.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
     item.questions = data; // 题单随候选人保存，直到使用者主动重新生成
     saveRank();
-    renderQuestions(data);
+    if (isDetailShowing(item)) {
+      renderQuestions(data);
+    } else {
+      // 弹窗已关闭：告知生成已完成，重开即可看到新题单
+      toast(`已为 ${item.result.candidate || item.filename} 生成新的面试题`, "success", 3200);
+    }
   } catch (err) {
-    els.qgResult.innerHTML = "";
+    if (isDetailShowing(item)) {
+      // 弹窗仍开着：还原旧题单（若有）并提示失败，避免空白或误导性的加载状态
+      if (item.questions) renderQuestions(item.questions);
+      else els.qgResult.innerHTML = '<p class="empty-note">生成失败，可点击右上角按钮重试</p>';
+    }
     toast(err.message || "生成失败，请稍后重试");
   } finally {
-    els.qgGenerate.disabled = false;
-    els.qgGenerateLabel.textContent = item?.questions ? "重新生成全套题" : "基于 JD 与该简历生成面试题";
+    item.qgen = null;
+    if (isDetailShowing(item)) {
+      els.qgGenerate.disabled = false;
+      els.qgGenerateLabel.textContent = item.questions ? "重新生成全套题" : "基于 JD 与该简历生成面试题";
+    }
   }
 });
 
@@ -324,11 +349,11 @@ els.qgResult.addEventListener("click", async (e) => {
     if (!res.ok || !data?.ok) throw new Error(data?.detail ?? `生成失败（${res.status}）`);
     qd.questions[idx] = data.question;
     saveRank();
-    renderQuestions(qd);
+    if (isDetailShowing(item)) renderQuestions(qd); // 弹窗已关闭则不写 DOM，静默保存即可
     if (data.notice) toast(data.notice, "info", 3800);
     else toast(`已替换第 ${idx + 1} 题`, "success", 2200);
   } catch (err) {
-    renderQuestions(qd); // 恢复按钮状态
+    if (isDetailShowing(item)) renderQuestions(qd); // 恢复按钮状态
     toast(err.message || "生成失败，请稍后重试");
   }
 });
