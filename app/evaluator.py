@@ -351,7 +351,7 @@ async def _chat_text_once(system: str, user: str, *, temperature: float, max_tok
     if _is_anthropic(cfg["base_url"]):
         payload = {
             "model": cfg["model"],
-            "max_tokens": max_tokens or 16384,  # thinking 模型思考边占用输出预算，上限给足避免 JSON 被截断
+            "max_tokens": max_tokens or 16384,  # Anthropic 协议必填无法省略，给足常规上限；OpenAI 分支见下
             "temperature": temperature,
             "thinking": {"type": "disabled"},  # 结构化任务关闭深度思考：更快更省，避免思考耗尽预算
             "system": system,
@@ -362,13 +362,16 @@ async def _chat_text_once(system: str, user: str, *, temperature: float, max_tok
     else:
         payload = {
             "model": cfg["model"],
-            "max_tokens": max_tokens or 8192,  # 显式给足：服务端默认（常 4096）可能截断 JSON 导致解析失败
             "temperature": temperature,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
         }
+        if max_tokens is not None:
+            # 默认不设输出上限：本网关实测不传 max_tokens 时输出 2.4 万 tokens 仍自然收尾（finish=stop），
+            # 显式给小了反而会截断大题量 JSON。仅调用方明确要求时才传。
+            payload["max_tokens"] = max_tokens
         headers = {"Authorization": f"Bearer {cfg['api_key']}"}
         url = f"{cfg['base_url']}/chat/completions"
 

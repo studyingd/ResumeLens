@@ -207,8 +207,6 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
         system,
         f"【岗位JD】\n{jd_text}\n\n【候选人简历】\n{resume_text}",
         temperature=0.4,
-        # 思考型模型的推理计入输出预算：题量越大越容易被截断，按总题量动态给足（上限 16384）
-        max_tokens=min(16384, 8192 + 512 * max(0, sum(counts.values()) - 8)),
     )
     salvaged = False
     try:

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from app import evaluator as ev
 from app.evaluator import (
     MAX_JD_CHARS,
     MAX_RESUME_CHARS,
@@ -12,6 +15,38 @@ from app.evaluator import (
     cap_text,
     format_llm_http_error,
 )
+
+
+class TestChatPayloadMaxTokens:
+    """OpenAI 分支默认不传 max_tokens（不设输出上限），显式指定时仍应生效。"""
+
+    class _FakeResp:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        @staticmethod
+        def json():
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    def _run(self, monkeypatch, **kwargs):
+        captured = {}
+
+        async def fake_post(client, url, payload, headers):
+            captured["payload"] = payload
+            return self._FakeResp()
+
+        monkeypatch.setattr(ev, "_post_llm", fake_post)
+        out = asyncio.run(ev._chat_text_once("s", "u", temperature=0.3, **kwargs))
+        return out, captured["payload"]
+
+    def test_omitted_by_default(self, configured_llm, monkeypatch):
+        out, payload = self._run(monkeypatch)
+        assert out == "ok"
+        assert "max_tokens" not in payload
+
+    def test_explicit_value_passed_through(self, configured_llm, monkeypatch):
+        _, payload = self._run(monkeypatch, max_tokens=512)
+        assert payload["max_tokens"] == 512
 
 
 class TestCapText:
