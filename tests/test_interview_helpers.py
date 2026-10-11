@@ -8,7 +8,9 @@ from app.interview import (
     DEFAULT_QUESTION_COUNTS,
     _counts_block,
     _length_block,
+    _normalize_category,
     _salvage_questions,
+    _shortage_block,
     guess_candidate_name,
     normalize_question_counts,
 )
@@ -93,6 +95,35 @@ class TestLengthBlock:
     def test_constraint_only_for_large_counts(self):
         block = _length_block(20)
         assert "篇幅约束" in block and "reference ≤ 150 字" in block
+
+
+class TestNormalizeCategory:
+    def test_variants_map_to_canonical(self):
+        """模型输出的变体标签归一到四类白名单，避免绕过逐类题量约束。"""
+        assert _normalize_category("情景设计题") == "情景设计"
+        assert _normalize_category("技能验证（技术深度）") == "技能验证"
+        assert _normalize_category(" 岗位 职责 ") == "岗位职责"
+        assert _normalize_category("软素质-沟通") == "软素质"
+
+    def test_unknown_kept_and_empty_fallback(self):
+        assert _normalize_category("综合能力") == "综合能力"
+        assert _normalize_category("") == "综合"
+        assert _normalize_category(None) == "综合"
+
+
+class TestShortageBlock:
+    def _q(self, cat):
+        return {"category": cat, "question": "q", "intent": "", "reference": ""}
+
+    def test_shortage_reported(self):
+        qs = [self._q("岗位职责")] * 2
+        block = _shortage_block(qs, {"岗位职责": 3, "技能验证": 3, "情景设计": 2, "软素质": 1})
+        assert "「岗位职责」缺 1 题" in block and "「技能验证」缺 3 题" in block
+
+    def test_exact_match_silent(self):
+        counts = {"岗位职责": 2, "技能验证": 1, "情景设计": 0, "软素质": 0}
+        qs = [self._q("岗位职责")] * 2 + [self._q("技能验证")]
+        assert _shortage_block(qs, counts) == ""
 
 
 class TestExplicitLabel:

@@ -173,6 +173,29 @@ def _salvage_questions(raw: str) -> dict:
     return {"questions": objs, "focus_areas": []}
 
 
+# 四类题量白名单：模型偶发输出变体标签（「情景设计题」「技能验证（技术）」等），
+# 归一后才能正确参与逐类截断与分布统计，避免变体标签绕过配置约束
+_CANONICAL_CATEGORIES = ("岗位职责", "技能验证", "情景设计", "软素质")
+
+
+def _normalize_category(raw) -> str:
+    """类别变体归一到四类白名单；无法识别时保留原样，空值回退「综合」。"""
+    s = re.sub(r"\s+", "", str(raw or ""))
+    for cat in _CANONICAL_CATEGORIES:
+        if cat in s:
+            return cat
+    return s or "综合"
+
+
+def _shortage_block(questions: list[dict], counts: dict) -> str:
+    """题量缺额提示：逐类截断只能砍多、不能补少——模型少给时明确告知，避免误以为配置未生效。"""
+    dist: dict[str, int] = {}
+    for q in questions:
+        dist[q["category"]] = dist.get(q["category"], 0) + 1
+    short = [f"「{c}」缺 {counts[c] - dist.get(c, 0)} 题" for c in counts if dist.get(c, 0) < counts[c]]
+    return f"模型实际返回的题量少于配置（{'、'.join(short)}），系模型输出所限，可重试或换用更强模型。" if short else ""
+
+
 async def generate_questions_llm(jd: str, resume: str, counts: dict | None = None) -> dict:
     jd_text, jd_cut = cap_text(jd.strip(), MAX_JD_CHARS)
     resume_text, resume_cut = cap_text(resume, MAX_RESUME_CHARS)
@@ -200,7 +223,7 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
         if isinstance(q, dict) and q.get("question"):
             questions.append(
                 {
-                    "category": str(q.get("category", "综合")),
+                    "category": _normalize_category(q.get("category")),
                     "question": str(q["question"]),
                     "intent": str(q.get("intent", "")),
                     "reference": str(q.get("reference", "")),
@@ -226,6 +249,9 @@ async def generate_questions_llm(jd: str, resume: str, counts: dict | None = Non
         notices.append("简历或 JD 内容过长，已截取前部分生成面试题。")
     if salvaged:
         notices.append("模型输出达到长度上限被截断，已保留前面完整的问题；如需更多可适当减少题量后重试。")
+    shortage = _shortage_block(questions, counts)
+    if shortage:
+        notices.append(shortage)
     return {
         "engine": "llm",
         "questions": questions,
