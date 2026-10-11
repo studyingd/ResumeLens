@@ -1920,19 +1920,30 @@ textarea:focus {
 }
 
 /* ���鵯���������֣���������ժҪ������������չ��ʱ�������������� */
-.detail-modal { width: min(1280px, calc(100vw - 40px)); }
+.detail-modal {
+  width: min(1280px, calc(100vw - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* 头部/评分条固定，滚动下放到两栏各自处理 */
+}
+.detail-modal > * { flex-shrink: 0; }
 
 .detail-body {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   grid-template-columns: minmax(360px, 60%) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 4px 24px;
-  align-items: start;
 }
 
 .detail-sections {
   border-right: 1px dashed var(--border);
   padding-right: 20px;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .detail-workspace {
@@ -1940,11 +1951,13 @@ textarea:focus {
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* ����չ��ʱ�������������Ⲣ�ţ�����������פ�����ʳ���/���մ𰸶�ͬ���ɼ��� */
-/* 左栏简历：点击「查看简历」展开，吸顶常驻便于与右栏题单对照 */
-.detail-sections .resume-block { position: sticky; top: 0; }
+/* 左栏简历：点击「查看简历」展开；两栏各自独立滚动，无需吸顶 */
 .detail-sections .resume-block .resume-frame { height: min(60vh, 680px); }
 
 .resume-toggle .resume-chevron { transition: transform var(--dur-base) var(--ease-out); }
@@ -1952,9 +1965,10 @@ textarea:focus {
 
 /* խ������Ϊ���жѵ�������ԭ����Ϊ�� */
 @media (max-width: 1080px) {
-  .detail-body { grid-template-columns: 1fr; }
+  .detail-modal { display: block; overflow-y: auto; } /* 窄屏回退整体滚动 */
+  .detail-body { display: block; overflow: visible; }
+  .detail-sections, .detail-workspace { overflow: visible; }
   .detail-sections { border-right: none; padding-right: 0; }
-  .detail-sections .resume-block { position: static; }
   .detail-sections .resume-block .resume-frame { height: 480px; }
   .questions-block { margin-top: 16px; }
 }
