@@ -1972,15 +1972,15 @@ textarea:focus {
 
 .ws-tabs, .ws-hint { grid-column: 1 / -1; }
 .detail-workspace[data-mode="both"] {
-  grid-template-columns: minmax(320px, 5fr) minmax(360px, 6fr);
+  grid-template-columns: minmax(400px, 6fr) minmax(340px, 5fr);
   gap: 0 20px;
 }
 .detail-workspace[data-mode="both"] .resume-block {
   position: sticky;
   top: 0;
 }
-.detail-workspace[data-mode="both"] .resume-frame { height: min(60vh, 680px); }
-.detail-workspace[data-mode="resume"] .resume-frame { height: min(68vh, 760px); }
+.detail-workspace[data-mode="both"] .resume-frame { height: min(calc(100vh - 96px), 900px); }
+.detail-workspace[data-mode="resume"] .resume-frame { height: min(calc(100vh - 80px), 920px); }
 
 /* խ������Ϊ���жѵ�������ԭ����Ϊ�� */
 @media (max-width: 1080px) {

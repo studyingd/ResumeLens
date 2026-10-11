@@ -127,7 +127,7 @@ els.detailOverlay.addEventListener("click", (e) => {
 // 右侧工作区页签：简历 / 面试题 均需点击后才显示；两者齐开时并排分栏
 // 展开状态页面级记忆：切换候选人时保持，避免重复点击
 // ---------------------------------------------------------------------------
-let wsResumeOpen = false;
+let wsResumeOpen = true; // 默认展开简历栏；面试题需点击后显示
 let wsQuestionsOpen = false;
 
 function applyWorkspaceLayout() {
