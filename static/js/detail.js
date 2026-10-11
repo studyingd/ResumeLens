@@ -123,6 +123,7 @@ els.detailOverlay.addEventListener("click", (e) => {
 
 function setResumeOpen(open) {
   els.resumeBody.hidden = !open;
+  els.detailWorkspace.classList.toggle("is-split", open); // 展开时简历与题单并排，简历吸顶常驻
   els.resumeToggle.setAttribute("aria-expanded", String(open));
   els.resumeToggleLabel.textContent = open ? "收起简历" : "查看简历";
   els.resumeToggle.classList.toggle("is-open", open);

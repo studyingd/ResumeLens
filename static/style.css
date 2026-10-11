@@ -1864,7 +1864,7 @@ textarea:focus {
 }
 .qc-reset:hover { color: #1a2332; }
 
-/* ¶¨Ïò³öÌâ£º¼òÀú»®´Ê¸¡°´Å¥ / Ãª¶¨Æ¬¶Î±êÇ© / ³öÌâ²àÖØÊäÈë¿ò */
+/* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â£ºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¸ï¿½ï¿½ï¿½Å¥ / Ãªï¿½ï¿½Æ¬ï¿½Î±ï¿½Ç© / ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
 .sel-quote-btn {
   position: fixed;
   z-index: 1200;
@@ -1928,3 +1928,47 @@ textarea:focus {
   border-color: var(--brand-700);
 }
 .qg-emphasis::placeholder { color: var(--text-faint); }
+
+/* ï¿½ï¿½ï¿½éµ¯ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ö£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ÕªÒªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õ¹ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */
+.detail-modal { width: min(1280px, calc(100vw - 40px)); }
+
+.detail-body {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  gap: 4px 24px;
+  align-items: start;
+}
+
+.detail-sections {
+  border-right: 1px dashed var(--border);
+  padding-right: 20px;
+  min-width: 0;
+}
+
+.detail-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  min-width: 0;
+}
+
+/* ï¿½ï¿½ï¿½ï¿½Õ¹ï¿½ï¿½Ê±ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½â²¢ï¿½Å£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½×¤ï¿½ï¿½ï¿½ï¿½ï¿½Ê³ï¿½ï¿½ï¿½/ï¿½ï¿½ï¿½Õ´ð°¸¶ï¿½Í¬ï¿½ï¿½ï¿½É¼ï¿½ï¿½ï¿½ */
+.detail-workspace.is-split {
+  grid-template-columns: minmax(320px, 5fr) minmax(360px, 6fr);
+  gap: 0 20px;
+}
+.detail-workspace.is-split .resume-block {
+  position: sticky;
+  top: 0;
+  margin-top: 14px;
+}
+.detail-workspace.is-split .resume-frame { height: min(60vh, 680px); }
+
+/* Õ­ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½ï¿½Ð¶Ñµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô­ï¿½ï¿½ï¿½ï¿½Îªï¿½ï¿½ */
+@media (max-width: 1080px) {
+  .detail-body { grid-template-columns: 1fr; }
+  .detail-sections { border-right: none; padding-right: 0; }
+  .detail-workspace.is-split { grid-template-columns: 1fr; }
+  .detail-workspace.is-split .resume-block { position: static; margin-top: 0; }
+  .detail-workspace.is-split .resume-frame { height: 480px; }
+}
