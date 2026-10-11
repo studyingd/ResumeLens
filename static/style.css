@@ -1928,7 +1928,7 @@ textarea:focus {
 
 .detail-body {
   display: grid;
-  grid-template-columns: minmax(360px, 46%) minmax(0, 1fr);
+  grid-template-columns: minmax(360px, 60%) minmax(0, 1fr);
   gap: 4px 24px;
   align-items: start;
 }
